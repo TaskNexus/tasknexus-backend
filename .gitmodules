@@ -1,0 +1,3 @@
+[submodule "lib/bamboo-engine"]
+	path = lib/bamboo-engine
+	url = https://github.com/ilinchunjie/bamboo-engine

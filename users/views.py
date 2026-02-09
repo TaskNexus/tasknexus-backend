@@ -153,6 +153,43 @@ class FeishuOAuthViewSet(viewsets.ViewSet):
         
         return Response({'authorize_url': authorize_url})
     
+    @action(detail=False, methods=['get'], url_path='qr_login_url', permission_classes=[permissions.AllowAny])
+    def qr_login_url(self, request):
+        """
+        Generate Feishu QR code login URL for SDK.
+        
+        GET /api/auth/feishu/qr_login_url/
+        Returns: { 
+            "goto_url": "https://passport.feishu.cn/...", 
+            "redirect_url_with_code": "https://passport.feishu.cn/...&tmp_code={tmp_code}"
+        }
+        """
+        from .feishu_oauth import FeishuOAuthService
+        from urllib.parse import urlencode, quote
+        
+        service = FeishuOAuthService()
+        state = request.query_params.get('state', '')
+        
+        # Build the authorization parameters
+        params = {
+            'client_id': service.app_id,
+            'redirect_uri': service.redirect_uri,
+            'response_type': 'code',
+            'state': state,
+        }
+        
+        # Base URL for QR code SDK
+        base_url = 'https://passport.feishu.cn/suite/passport/oauth/authorize'
+        goto_url = f"{base_url}?{urlencode(params)}"
+        
+        # URL to redirect to after scanning (with tmp_code placeholder)
+        redirect_url_with_code = f"{goto_url}&tmp_code={{tmp_code}}"
+        
+        return Response({
+            'goto_url': goto_url,
+            'redirect_url_with_code': redirect_url_with_code
+        })
+    
     @action(detail=False, methods=['get'], url_path='callback', permission_classes=[permissions.AllowAny])
     def callback(self, request):
         """

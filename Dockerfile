@@ -21,6 +21,12 @@ COPY requirements.txt .
 
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Install channel plugins if specified
+ARG CHANNEL_PLUGINS=""
+RUN if [ -n "$CHANNEL_PLUGINS" ]; then \
+    pip install --no-cache-dir $CHANNEL_PLUGINS; \
+    fi
+
 # Create a non-root user and switch to it
 RUN addgroup --system appuser && adduser --system --group appuser
 

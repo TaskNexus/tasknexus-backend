@@ -1,6 +1,6 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import RegisterView, UserDetailView, UserViewSet, TelegramBindViewSet
+from .views import RegisterView, UserDetailView, UserViewSet, TelegramBindViewSet, FeishuOAuthViewSet
 from rest_framework_simplejwt.views import (
     TokenObtainPairView,
     TokenRefreshView,
@@ -9,6 +9,7 @@ from rest_framework_simplejwt.views import (
 router = DefaultRouter()
 router.register(r'users', UserViewSet)
 router.register(r'telegram', TelegramBindViewSet, basename='telegram')
+router.register(r'feishu', FeishuOAuthViewSet, basename='feishu')
 
 urlpatterns = [
     path('register/', RegisterView.as_view(), name='auth_register'),

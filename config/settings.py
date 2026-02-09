@@ -58,6 +58,7 @@ INSTALLED_APPS = [
     'chat',
     'django_filters',
     'agents',
+    'plugins',
     'client_agents',
     'channels',
 ]
@@ -239,3 +240,8 @@ SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(minutes=60),
     'REFRESH_TOKEN_LIFETIME': timedelta(days=1),
 }
+
+# Feishu OAuth Configuration
+FEISHU_APP_ID = os.environ.get('OAUTH_FEISHU_APP_ID', '')
+FEISHU_APP_SECRET = os.environ.get('OAUTH_FEISHU_APP_SECRET', '')
+FEISHU_REDIRECT_URI = os.environ.get('FEISHU_REDIRECT_URI', 'http://localhost:5173/feishu-callback')

@@ -51,16 +51,7 @@ class AgentWorkspace(models.Model):
     name = models.CharField(max_length=100, verbose_name='名称')
     labels = models.JSONField(default=list, blank=True, verbose_name='标签')
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='IDLE', verbose_name='状态')
-    
-    # 当前任务（如果正在运行）
-    current_task = models.ForeignKey(
-        'AgentTask',
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='+',
-        verbose_name='当前任务'
-    )
+    pipeline_id = models.CharField(max_length=64, blank=True, default='', verbose_name='Pipeline ID')
 
     class Meta:
         verbose_name = 'Agent 工作空间'
@@ -107,6 +98,9 @@ class AgentTask(models.Model):
     command = models.TextField(verbose_name='执行命令')
     timeout = models.IntegerField(default=3600, verbose_name='超时时间（秒）')
 
+    # Pipeline 关联
+    pipeline_id = models.CharField(max_length=64, blank=True, default='', verbose_name='Pipeline ID')
+
     # 状态
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='PENDING', verbose_name='状态')
     
@@ -122,6 +116,7 @@ class AgentTask(models.Model):
     dispatched_at = models.DateTimeField(null=True, blank=True, verbose_name='分发时间')
     started_at = models.DateTimeField(null=True, blank=True, verbose_name='开始时间')
     finished_at = models.DateTimeField(null=True, blank=True, verbose_name='完成时间')
+    last_heartbeat = models.DateTimeField(null=True, blank=True, verbose_name='最后心跳')
 
     class Meta:
         verbose_name = 'Agent 任务'

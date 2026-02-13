@@ -179,6 +179,7 @@ def start_task_execution(task):
         # project_id is passed here for components to access via parent_data.get_one_of_inputs('project_id')
         root_pipeline_data = {
             'project_id': workflow.project_id,
+            'pipeline_id': pipeline_tree['id'],
             'task_created_by': task.created_by.id,
             'task_started_at': task.started_at.isoformat() if task.started_at else None,
         }

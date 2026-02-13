@@ -92,6 +92,8 @@ class AgentConsumer(AsyncJsonWebsocketConsumer):
             await self.handle_task_completed(content)
         elif message_type == 'task_failed':
             await self.handle_task_failed(content)
+        elif message_type == 'task_heartbeat':
+            await self.handle_task_heartbeat(content)
         else:
             logger.warning(f"Unknown message type from agent {self.agent.name}: {message_type}")
 
@@ -177,6 +179,13 @@ class AgentConsumer(AsyncJsonWebsocketConsumer):
             "environment": event.get("environment", {}),
         })
 
+    async def task_cancel(self, event):
+        """Send task cancel message to agent."""
+        await self.send_json({
+            "type": "task_cancel",
+            "task_id": event["task_id"],
+        })
+
     # ===== AgentTask Database Operations =====
     
     @database_sync_to_async
@@ -202,6 +211,16 @@ class AgentConsumer(AsyncJsonWebsocketConsumer):
             )
         except Exception as e:
             logger.error(f"Failed to append output to AgentTask {task_id}: {e}")
+
+    async def handle_task_heartbeat(self, content):
+        """Process task heartbeat from agent."""
+        task_id = content.get('task_id')
+        if task_id:
+            await self.update_agent_task_status(
+                task_id,
+                last_heartbeat=timezone.now()
+            )
+            logger.debug(f"Received heartbeat for task {task_id} from agent {self.agent.name}")
 
     # ===== Database Operations =====
     

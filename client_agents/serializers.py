@@ -8,8 +8,8 @@ class AgentWorkspaceSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = AgentWorkspace
-        fields = ['id', 'name', 'labels', 'status', 'status_display', 'current_task']
-        read_only_fields = ['id', 'status', 'current_task']
+        fields = ['id', 'name', 'labels', 'status', 'status_display', 'pipeline_id']
+        read_only_fields = ['id', 'status', 'pipeline_id']
 
 
 class ClientAgentSerializer(serializers.ModelSerializer):
@@ -72,14 +72,14 @@ class AgentTaskSerializer(serializers.ModelSerializer):
         model = AgentTask
         fields = [
             'id', 'agent', 'agent_name', 'workspace', 'workspace_name',
-            'client_repo_url', 'client_repo_ref', 'command', 'timeout',
+            'pipeline_id', 'client_repo_url', 'client_repo_ref', 'command', 'timeout',
             'status', 'status_display', 'exit_code', 'stdout', 'stderr',
             'result', 'error_message',
-            'created_at', 'dispatched_at', 'started_at', 'finished_at'
+            'created_at', 'dispatched_at', 'started_at', 'finished_at', 'last_heartbeat'
         ]
         read_only_fields = [
             'id', 'status', 'exit_code', 'stdout', 'stderr', 'result', 'error_message',
-            'created_at', 'dispatched_at', 'started_at', 'finished_at'
+            'created_at', 'dispatched_at', 'started_at', 'finished_at', 'last_heartbeat'
         ]
 
 

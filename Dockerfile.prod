@@ -1,0 +1,50 @@
+FROM python:3.11-slim
+
+# Include the cloned libraries in PYTHONPATH
+ENV PYTHONPATH="${PYTHONPATH}:/app/lib/bamboo-engine:/app/lib/bamboo-engine/runtime/bamboo-pipeline"
+ENV PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    libpq-dev \
+    curl \
+    git \
+    procps \
+    netcat-openbsd \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy and install Python dependencies first for better caching
+COPY backend/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Install channel plugins if specified
+ARG CHANNEL_PLUGINS=""
+RUN if [ -n "$CHANNEL_PLUGINS" ]; then \
+    pip install --no-cache-dir $CHANNEL_PLUGINS; \
+    fi
+
+# Create a non-root user
+RUN addgroup --system appuser && adduser --system --group appuser
+
+# Copy backend source code
+COPY backend/ .
+
+# Copy custom client agent components into the image
+COPY tasknexus_client_agent/ /app/tasknexus_client_agent/
+
+# Set up entrypoint (already copied to /app via COPY backend/ .)
+RUN cp /app/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN sed -i 's/\r$//' /usr/local/bin/entrypoint.sh && chmod +x /usr/local/bin/entrypoint.sh
+
+# Change ownership
+RUN chown -R appuser:appuser /app
+
+USER appuser
+
+EXPOSE 8000
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"]

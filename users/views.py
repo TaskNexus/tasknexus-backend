@@ -81,57 +81,6 @@ import random
 import string
 
 
-class TelegramBindViewSet(viewsets.ViewSet):
-    """
-    ViewSet for Telegram binding operations.
-    """
-    permission_classes = [permissions.IsAuthenticated]
-
-    @action(detail=False, methods=['post'], url_path='generate-code')
-    def generate_code(self, request):
-        """
-        Generate a 6-digit binding code and store it in Redis.
-        """
-        code = ''.join(random.choices(string.digits, k=6))
-        cache_key = f"tg_bind:{code}"
-        # Store user_id with 5 minute TTL
-        cache.set(cache_key, request.user.id, timeout=300)
-        return Response({
-            'code': code,
-            'expires_in': 300,
-            'instruction': f'请在 Telegram 中向机器人发送: /bind {code}'
-        })
-
-    @action(detail=False, methods=['post'], url_path='unbind')
-    def unbind(self, request):
-        """
-        Remove TelegramUser association for the current user.
-        """
-        from .models import TelegramUser
-        try:
-            tg_user = TelegramUser.objects.get(user=request.user)
-            tg_user.delete()
-            return Response({'message': 'Telegram 已解绑'})
-        except TelegramUser.DoesNotExist:
-            return Response({'error': '未绑定 Telegram'}, status=status.HTTP_400_BAD_REQUEST)
-
-    @action(detail=False, methods=['get'], url_path='status')
-    def get_status(self, request):
-        """
-        Get current user's Telegram binding status.
-        """
-        from .models import TelegramUser
-        try:
-            tg_user = TelegramUser.objects.get(user=request.user)
-            return Response({
-                'bound': True,
-                'telegram_id': tg_user.telegram_id,
-                'username': tg_user.username
-            })
-        except TelegramUser.DoesNotExist:
-            return Response({'bound': False})
-
-
 class FeishuOAuthViewSet(viewsets.ViewSet):
     """
     Feishu OAuth login endpoints.

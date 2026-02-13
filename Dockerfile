@@ -35,13 +35,6 @@ COPY . .
 # Change ownership of the app directory
 RUN chown -R appuser:appuser /app
 
-
-
-
-COPY entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN sed -i 's/\r$//' /usr/local/bin/entrypoint.sh && chmod +x /usr/local/bin/entrypoint.sh
-
 USER appuser
 
-ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"]

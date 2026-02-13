@@ -8,7 +8,7 @@ class UserSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ('id', 'username', 'email', 'password', 'first_name', 'last_name', 'is_staff', 'is_superuser', 'date_joined', 'role', 'telegram_username')
+        fields = ('id', 'username', 'email', 'password', 'first_name', 'last_name', 'is_staff', 'is_superuser', 'date_joined', 'role')
         read_only_fields = ('date_joined',)
 
     role = serializers.SerializerMethodField()
@@ -19,15 +19,6 @@ class UserSerializer(serializers.ModelSerializer):
         if obj.is_staff:
             return 'ADMIN'
         return 'MEMBER'
-
-    telegram_username = serializers.SerializerMethodField()
-
-    def get_telegram_username(self, obj):
-        """Return Telegram username if bound."""
-        try:
-            return obj.telegram_user.username
-        except Exception:
-            return None
 
     def create(self, validated_data):
         user = User.objects.create_user(

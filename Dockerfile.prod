@@ -35,10 +35,6 @@ COPY backend/ .
 # Copy custom client agent components into the image
 COPY tasknexus_client_agent/ /app/tasknexus_client_agent/
 
-# Set up entrypoint (already copied to /app via COPY backend/ .)
-RUN cp /app/entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN sed -i 's/\r$//' /usr/local/bin/entrypoint.sh && chmod +x /usr/local/bin/entrypoint.sh
-
 # Change ownership
 RUN chown -R appuser:appuser /app
 
@@ -46,5 +42,4 @@ USER appuser
 
 EXPOSE 8000
 
-ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"]

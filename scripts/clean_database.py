@@ -15,7 +15,7 @@ TaskNexus 平台数据库清理脚本
 
 选项说明:
     --yes, -y           跳过确认提示
-    --clean-users       清理账号信息 (User, TelegramUser)，保留 admin
+    --clean-users       清理账号信息 (User)，保留 admin
     --clean-projects    清理项目信息 (Project, ProjectMember)
 """
 
@@ -43,7 +43,7 @@ def parse_args():
     parser.add_argument('--yes', '-y', action='store_true', 
                         help='跳过确认提示，直接执行清理')
     parser.add_argument('--clean-users', action='store_true',
-                        help='清理账号信息 (User, TelegramUser)，保留 admin')
+                        help='清理账号信息 (User)，保留 admin')
     parser.add_argument('--clean-projects', action='store_true',
                         help='清理项目信息 (Project, ProjectMember)')
     return parser.parse_args()
@@ -241,13 +241,7 @@ def clean_project_data():
 
 def clean_user_data():
     """清理用户数据（可选）"""
-    from users.models import TelegramUser
-    
     User = get_user_model()
-    
-    telegram_count = TelegramUser.objects.count()
-    TelegramUser.objects.all().delete()
-    print(f"  ✓ 已删除 {telegram_count} 个 Telegram 绑定")
     
     # 保留 admin 用户
     user_count = User.objects.exclude(username='admin').count()
@@ -306,7 +300,7 @@ def main():
         print(f"[非交互模式] clean_users={clean_users}, clean_projects={clean_projects}")
     else:
         # 交互模式，询问用户
-        clean_users = confirm_action("是否清理账号信息? (User, TelegramUser)")
+        clean_users = confirm_action("是否清理账号信息? (User)")
         clean_projects = confirm_action("是否清理项目信息? (Project, ProjectMember)")
     
     print()
@@ -320,7 +314,7 @@ def main():
     if clean_projects:
         print("  - 项目数据 (Project, ProjectMember)")
     if clean_users:
-        print("  - 账号数据 (User, TelegramUser) [保留 admin]")
+        print("  - 账号数据 (User) [保留 admin]")
     print()
     
     if not args.yes and not confirm_action("确认开始清理?"):

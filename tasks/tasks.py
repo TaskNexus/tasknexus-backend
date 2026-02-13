@@ -173,7 +173,7 @@ def start_task_execution(task):
         task.started_at = timezone.now()
 
         # 3. Apply context overrides (if any) - params are already in pipeline_tree from frontend
-        apply_task_inputs(pipeline_tree, task)
+        apply_task_inputs(pipeline_tree, task, workflow)
 
         # 4. Run pipeline with bamboo-engine API
         # project_id is passed here for components to access via parent_data.get_one_of_inputs('project_id')
@@ -183,6 +183,12 @@ def start_task_execution(task):
             'task_created_by': task.created_by.id,
             'task_started_at': task.started_at.isoformat() if task.started_at else None,
         }
+
+        # Merge project extra_config global_params into root_pipeline_data
+        if workflow.project and workflow.project.extra_config:
+            for param in workflow.project.extra_config.get('global_params', []):
+                root_pipeline_data[param['key']] = param['value']
+
         runtime = BambooDjangoRuntime()
         bamboo_api.run_pipeline(
             runtime=runtime,
@@ -228,14 +234,17 @@ def apply_context_inputs(pipeline_tree, context=None):
     if overridden > 0:
         logger.info(f"Applied {overridden} context overrides to pipeline_tree")
 
-def apply_task_inputs(pipeline_tree, task):
+def apply_task_inputs(pipeline_tree, task, workflow=None):
     if 'data' not in pipeline_tree:
         pipeline_tree['data'] = {}
     if 'inputs' not in pipeline_tree['data']:
         pipeline_tree['data']['inputs'] = {}
-    
-    inputs = pipeline_tree['data']['inputs']
-    inputs['${task_started_at}'] = {'type': 'splice', 'value': task.started_at}
-    inputs['${task_created_by}'] = {'type': 'splice', 'value': task.created_by.id}
+
+    # Apply project global_params as pipeline global variables
+    if workflow and workflow.project and workflow.project.extra_config:
+        global_params = {}
+        for param in workflow.project.extra_config.get('global_params', []):
+            global_params[param['key']] = param['value']
+        apply_context_inputs(pipeline_tree, global_params)
 
     apply_context_inputs(pipeline_tree, task.context)

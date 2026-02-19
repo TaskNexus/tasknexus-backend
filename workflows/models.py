@@ -24,6 +24,9 @@ class WorkflowDefinition(models.Model):
     # Store Backend Pipeline Tree (Bamboo Engine JSON)
     pipeline_tree = models.JSONField(default=dict, blank=True, verbose_name="Pipeline Tree")
     
+    # Notification template (uses {{variable}} syntax)
+    notify_template = models.TextField(blank=True, default='', verbose_name="通知模板")
+    
     created_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='workflows', verbose_name="Creator")
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="Created At")
     updated_at = models.DateTimeField(auto_now=True, verbose_name="Updated At")

@@ -3,15 +3,14 @@
 Task Notification Module
 
 Sends task execution result notifications via channel plugins (e.g., Feishu).
+Supports custom templates with {{variable}} syntax.
 """
 
+import re
 import logging
 import threading
 
 from django.contrib.auth import get_user_model
-
-from plugins import PluginManager
-from plugins.channel import MessagePayload
 
 logger = logging.getLogger('django')
 
@@ -30,15 +29,42 @@ STATUS_LABEL = {
     'REVOKED': '已撤销',
 }
 
+DEFAULT_TEMPLATE = (
+    "{{status_emoji}} **任务{{status_label}}**\n\n"
+    "**任务名称**: {{task_name}}\n"
+    "**工作流**: {{workflow_name}}\n"
+    "**状态**: {{status_label}}"
+)
+
+
+def render_template(template: str, variables: dict) -> str:
+    """
+    Render a template string by replacing {{key}} or {{key.subkey}} 
+    with values from the variables dict.
+    
+    Supports nested path lookup like {{params.branch_name}}.
+    Unknown variables are replaced with empty string.
+    """
+    def replacer(match):
+        path = match.group(1).strip()
+        value = variables
+        for part in path.split('.'):
+            if isinstance(value, dict):
+                value = value.get(part, '')
+            else:
+                return ''
+            if value == '':
+                break
+        return str(value)
+    
+    return re.sub(r'\{\{(.+?)\}\}', replacer, template)
+
 
 def send_task_notification(task):
     """
     Send notification to configured users when a task finishes.
     
     Runs in a background thread to avoid blocking the signal handler.
-    
-    Args:
-        task: TaskInstance with notify_enabled, notify_user_ids, etc.
     """
     if not task.notify_enabled:
         return
@@ -46,32 +72,50 @@ def send_task_notification(task):
     if not task.notify_user_ids:
         return
     
+    # Read template from workflow
+    notify_template = ''
+    if task.workflow:
+        notify_template = getattr(task.workflow, 'notify_template', '') or ''
+    
     # Run in background thread
     thread = threading.Thread(
         target=_do_send_notification,
-        args=(task.id, task.name, task.status, task.notify_user_ids,
-              task.workflow.name if task.workflow else 'Unknown'),
+        args=(
+            task.id,
+            task.name,
+            task.status,
+            task.notify_user_ids,
+            task.workflow.name if task.workflow else 'Unknown',
+            task.context or {},
+            notify_template,
+        ),
         daemon=True
     )
     thread.start()
 
 
-def _do_send_notification(task_id, task_name, status, notify_user_ids, workflow_name):
+def _do_send_notification(task_id, task_name, status, notify_user_ids, workflow_name, context, notify_template):
     """
     Actually send notifications. Runs in a background thread.
     Uses lark_oapi directly to send messages via open_id.
     """
     try:
-        # Build message
+        # Build variables for template rendering
         emoji = STATUS_EMOJI.get(status, '📋')
         label = STATUS_LABEL.get(status, status)
         
-        message = (
-            f"{emoji} **任务{label}**\n\n"
-            f"**任务名称**: {task_name}\n"
-            f"**工作流**: {workflow_name}\n"
-            f"**状态**: {label}\n"
-        )
+        variables = {
+            'task_name': task_name,
+            'status': status,
+            'status_emoji': emoji,
+            'status_label': label,
+            'workflow_name': workflow_name,
+            'params': context,  # task.context = runtime params
+        }
+        
+        # Use custom template or default
+        template = notify_template.strip() if notify_template else DEFAULT_TEMPLATE
+        message = render_template(template, variables)
         
         # Get users with feishu_openid
         users = User.objects.filter(
@@ -86,8 +130,8 @@ def _do_send_notification(task_id, task_name, status, notify_user_ids, workflow_
         # Use OAuth app credentials (same app that generated the user's open_id)
         # Falls back to channel bot credentials if OAuth ones aren't available
         import os
-        app_id = os.environ.get('OAUTH_FEISHU_APP_ID') or os.environ.get('FEISHU_APP_ID')
-        app_secret = os.environ.get('OAUTH_FEISHU_APP_SECRET') or os.environ.get('FEISHU_APP_SECRET')
+        app_id = os.environ.get('FEISHU_APP_ID')
+        app_secret = os.environ.get('FEISHU_APP_SECRET')
         
         if not app_id or not app_secret:
             logger.error("Cannot send notification: missing Feishu app credentials")
@@ -106,10 +150,21 @@ def _do_send_notification(task_id, task_name, status, notify_user_ids, workflow_
             .app_secret(app_secret) \
             .log_level(lark.LogLevel.INFO) \
             .build()
+        # Status-based card color
+        CARD_COLOR = {
+            'FINISHED': 'green',
+            'FAILED': 'red',
+            'REVOKED': 'grey',
+        }
+        card_color = CARD_COLOR.get(status, 'blue')
         
         # Format as card for better display in Feishu
         card = {
             "config": {"wide_screen_mode": True},
+            "header": {
+                "title": {"tag": "plain_text", "content": f"{emoji} 任务{label}"},
+                "template": card_color
+            },
             "elements": [
                 {"tag": "markdown", "content": message}
             ]

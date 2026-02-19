@@ -242,6 +242,6 @@ SIMPLE_JWT = {
 }
 
 # Feishu OAuth Configuration
-FEISHU_APP_ID = os.environ.get('OAUTH_FEISHU_APP_ID', '')
-FEISHU_APP_SECRET = os.environ.get('OAUTH_FEISHU_APP_SECRET', '')
-FEISHU_REDIRECT_URI = os.environ.get('FEISHU_REDIRECT_URI', 'http://localhost:5173/feishu-callback')
+FEISHU_APP_ID = os.environ.get('FEISHU_APP_ID', '')
+FEISHU_APP_SECRET = os.environ.get('FEISHU_APP_SECRET', '')
+FEISHU_REDIRECT_URI = os.environ.get('FEISHU_REDIRECT_URI')

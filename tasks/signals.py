@@ -21,11 +21,19 @@ class PipelineEventType:
 
 def _update_task_status(pipeline_id: str, status: str, log_prefix: str = ""):
     try:
-        task = TaskInstance.objects.get(pipeline_id=pipeline_id)
+        task = TaskInstance.objects.select_related('workflow').get(pipeline_id=pipeline_id)
         task.status = status
         task.finished_at = timezone.now()
         task.save(update_fields=['status', 'finished_at'])
         logger.info(f"{log_prefix}Updated TaskInstance {task.id} status to {status}")
+        
+        # Send notification if enabled
+        try:
+            from tasks.notifications import send_task_notification
+            send_task_notification(task)
+        except Exception as e:
+            logger.exception(f"{log_prefix}Error sending notification for task {task.id}: {e}")
+        
     except TaskInstance.DoesNotExist:
         logger.warning(f"{log_prefix}TaskInstance not found for pipeline_id: {pipeline_id}")
     except Exception as e:

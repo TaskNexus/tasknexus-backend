@@ -11,14 +11,15 @@ class TaskInstanceSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'name', 'workflow', 'workflow_name', 'pipeline_id', 'status', 
             'context', 'execution_data', 'created_by', 'created_by_username',
-            'created_at', 'started_at', 'finished_at'
+            'created_at', 'started_at', 'finished_at',
+            'notify_enabled', 'notify_user_ids'
         ]
         read_only_fields = ['pipeline_id', 'status', 'created_by', 'created_at', 'started_at', 'finished_at', 'execution_data']
 
 class CreateTaskSerializer(serializers.ModelSerializer):
     class Meta:
         model = TaskInstance
-        fields = ['name', 'workflow', 'context']
+        fields = ['name', 'workflow', 'context', 'notify_enabled', 'notify_user_ids']
 
     def create(self, validated_data):
         user = self.context['request'].user

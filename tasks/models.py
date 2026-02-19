@@ -22,6 +22,10 @@ class TaskInstance(models.Model):
     context = models.JSONField(default=dict, blank=True)
     execution_data = models.JSONField(default=dict, blank=True)  # Store execution related data
 
+    # Notification settings
+    notify_enabled = models.BooleanField(default=False)
+    notify_user_ids = models.JSONField(default=list, blank=True)  # List of user IDs to notify
+
     created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     started_at = models.DateTimeField(null=True, blank=True)

@@ -30,3 +30,4 @@ python-telegram-bot>=20.0
 channels>=4.0.0
 channels-redis>=4.0.0
 daphne>=4.0.0
+lark-oapi>=1.0.0

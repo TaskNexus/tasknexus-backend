@@ -12,14 +12,15 @@ class TaskInstanceSerializer(serializers.ModelSerializer):
             'id', 'name', 'workflow', 'workflow_name', 'pipeline_id', 'status', 
             'context', 'execution_data', 'created_by', 'created_by_username',
             'created_at', 'started_at', 'finished_at',
-            'notify_enabled', 'notify_user_ids'
+            'notify_enabled', 'notify_user_ids',
+            'feishu_notify_enabled', 'feishu_notify_open_ids'
         ]
         read_only_fields = ['pipeline_id', 'status', 'created_by', 'created_at', 'started_at', 'finished_at', 'execution_data']
 
 class CreateTaskSerializer(serializers.ModelSerializer):
     class Meta:
         model = TaskInstance
-        fields = ['name', 'workflow', 'context', 'notify_enabled', 'notify_user_ids']
+        fields = ['name', 'workflow', 'context', 'notify_enabled', 'notify_user_ids', 'feishu_notify_enabled', 'feishu_notify_open_ids']
 
     def create(self, validated_data):
         user = self.context['request'].user
@@ -54,7 +55,9 @@ class PeriodicTaskSerializer(serializers.ModelSerializer):
             'id', 'name', 'workflow', 'workflow_name', 'creator', 'creator_username', 
             'enabled', 'total_run_count', 'last_run_at', 'created_at', 'updated_at',
             'minute', 'hour', 'day_of_week', 'day_of_month', 'month_of_year',
-            'cron_expression', 'context'
+            'cron_expression', 'context',
+            'notify_enabled', 'notify_user_ids',
+            'feishu_notify_enabled', 'feishu_notify_open_ids',
         ]
         read_only_fields = ['creator', 'total_run_count', 'last_run_at', 'created_at', 'updated_at']
 
@@ -159,7 +162,9 @@ class ScheduledTaskSerializer(serializers.ModelSerializer):
         model = ScheduledTask
         fields = [
             'id', 'name', 'workflow', 'workflow_name', 'creator', 'creator_username',
-            'execution_time', 'status', 'created_at', 'updated_at', 'context'
+            'execution_time', 'status', 'created_at', 'updated_at', 'context',
+            'notify_enabled', 'notify_user_ids',
+            'feishu_notify_enabled', 'feishu_notify_open_ids',
         ]
         read_only_fields = ['creator', 'status', 'created_at', 'updated_at']
 
@@ -228,7 +233,9 @@ class WebhookTaskSerializer(serializers.ModelSerializer):
             'token', 'secret', 'context',
             'enabled', 'total_run_count', 'last_run_at',
             'creator', 'creator_username', 'created_at', 'updated_at',
-            'webhook_url'
+            'webhook_url',
+            'notify_enabled', 'notify_user_ids',
+            'feishu_notify_enabled', 'feishu_notify_open_ids',
         ]
         read_only_fields = ['token', 'creator', 'total_run_count', 'last_run_at', 'created_at', 'updated_at']
 

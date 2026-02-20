@@ -27,7 +27,11 @@ def execute_periodic_task(periodic_task_id):
             context=periodic_task.context or {},
             execution_data={'periodic_task_id': periodic_task.id},
             created_by=periodic_task.creator,
-            status='CREATED'
+            status='CREATED',
+            notify_enabled=periodic_task.notify_enabled,
+            notify_user_ids=periodic_task.notify_user_ids or [],
+            feishu_notify_enabled=periodic_task.feishu_notify_enabled,
+            feishu_notify_open_ids=periodic_task.feishu_notify_open_ids or [],
         )
         
         # 2. Execute using unified logic
@@ -68,7 +72,11 @@ def execute_scheduled_task(scheduled_task_id):
             context=scheduled_task.context or {},
             execution_data={'scheduled_task_id': scheduled_task.id},
             created_by=scheduled_task.creator,
-            status='CREATED'
+            status='CREATED',
+            notify_enabled=scheduled_task.notify_enabled,
+            notify_user_ids=scheduled_task.notify_user_ids or [],
+            feishu_notify_enabled=scheduled_task.feishu_notify_enabled,
+            feishu_notify_open_ids=scheduled_task.feishu_notify_open_ids or [],
         )
         
         # 2. Execute using unified logic
@@ -118,7 +126,11 @@ def execute_webhook_task(webhook_task_id, payload=None):
             context=context,
             execution_data={'webhook_task_id': webhook_task.id, 'payload': payload},
             created_by=webhook_task.creator,
-            status='CREATED'
+            status='CREATED',
+            notify_enabled=webhook_task.notify_enabled,
+            notify_user_ids=webhook_task.notify_user_ids or [],
+            feishu_notify_enabled=webhook_task.feishu_notify_enabled,
+            feishu_notify_open_ids=webhook_task.feishu_notify_open_ids or [],
         )
         
         # 2. Execute using unified logic
@@ -239,6 +251,17 @@ def apply_task_inputs(pipeline_tree, task, workflow=None):
         pipeline_tree['data'] = {}
     if 'inputs' not in pipeline_tree['data']:
         pipeline_tree['data']['inputs'] = {}
+
+    # Apply root_pipeline_data variables (project_id, pipeline_id, etc.)
+    # Note: task_started_at is passed as a datetime object so Mako splice
+    # expressions like ${task_started_at.strftime("%Y%m%d")} work correctly.
+    root_vars = {
+        'project_id': workflow.project_id if workflow else None,
+        'pipeline_id': pipeline_tree.get('id', ''),
+        'task_created_by': task.created_by.id if task.created_by else None,
+        'task_started_at': task.started_at,
+    }
+    apply_context_inputs(pipeline_tree, root_vars)
 
     # Apply project global_params as pipeline global variables
     if workflow and workflow.project and workflow.project.extra_config:

@@ -22,9 +22,13 @@ class TaskInstance(models.Model):
     context = models.JSONField(default=dict, blank=True)
     execution_data = models.JSONField(default=dict, blank=True)  # Store execution related data
 
-    # Notification settings
+    # Notification settings (platform users)
     notify_enabled = models.BooleanField(default=False)
     notify_user_ids = models.JSONField(default=list, blank=True)  # List of user IDs to notify
+    
+    # Feishu direct notification (no platform registration needed)
+    feishu_notify_enabled = models.BooleanField(default=False)
+    feishu_notify_open_ids = models.JSONField(default=list, blank=True)  # List of Feishu open_ids
 
     created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -56,6 +60,12 @@ class PeriodicTask(models.Model):
     total_run_count = models.IntegerField(default=0)
     last_run_at = models.DateTimeField(null=True, blank=True)
     
+    # Notification settings
+    notify_enabled = models.BooleanField(default=False)
+    notify_user_ids = models.JSONField(default=list, blank=True)
+    feishu_notify_enabled = models.BooleanField(default=False)
+    feishu_notify_open_ids = models.JSONField(default=list, blank=True)
+    
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -86,6 +96,13 @@ class ScheduledTask(models.Model):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='PENDING')
     
     creator = models.ForeignKey(User, on_delete=models.SET_NULL, null=True)
+    
+    # Notification settings
+    notify_enabled = models.BooleanField(default=False)
+    notify_user_ids = models.JSONField(default=list, blank=True)
+    feishu_notify_enabled = models.BooleanField(default=False)
+    feishu_notify_open_ids = models.JSONField(default=list, blank=True)
+    
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -121,6 +138,13 @@ class WebhookTask(models.Model):
     
     # Metadata
     creator = models.ForeignKey(User, on_delete=models.SET_NULL, null=True)
+    
+    # Notification settings
+    notify_enabled = models.BooleanField(default=False)
+    notify_user_ids = models.JSONField(default=list, blank=True)
+    feishu_notify_enabled = models.BooleanField(default=False)
+    feishu_notify_open_ids = models.JSONField(default=list, blank=True)
+    
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

@@ -23,6 +23,8 @@ def health_check(request):
     return JsonResponse({"status": "ok"})
 
 
+from tasks.feishu_views import FeishuUsersView
+
 urlpatterns = [
     path('api/health/', health_check, name='health_check'),
     path('admin/', admin.site.urls),
@@ -34,4 +36,5 @@ urlpatterns = [
     path('api/components/', include('components.urls')),
     path('api/ai/', include('agents.urls')),
     path('api/client-agents/', include('client_agents.urls')),
+    path('api/feishu/users/', FeishuUsersView.as_view(), name='feishu-users'),
 ]

@@ -1,7 +1,9 @@
 
-from rest_framework import viewsets
+from rest_framework import viewsets, status
 from rest_framework.response import Response
+from rest_framework.decorators import action
 from pipeline.component_framework.library import ComponentLibrary
+from .models import ComponentCategory
 
 class ComponentViewSet(viewsets.ViewSet):
     """
@@ -89,3 +91,54 @@ class ComponentViewSet(viewsets.ViewSet):
             })
             
         return Response(components)
+
+
+class CategoryViewSet(viewsets.ViewSet):
+    """
+    API endpoint for managing component category icons.
+    GET  /api/categories/       -> list all categories (auto-syncs from components)
+    PATCH /api/categories/{name}/ -> update a category's icon
+    """
+
+    def list(self, request):
+        # Collect all category names from registered components
+        category_names = set()
+        for code, version_dict in ComponentLibrary.components.items():
+            if not isinstance(version_dict, dict) or not version_dict:
+                continue
+            for v, cls in version_dict.items():
+                cat = getattr(cls, 'category', 'Uncategorized')
+                category_names.add(cat)
+                break
+
+        # Ensure each category exists in DB (create with default icon if missing)
+        for cat_name in category_names:
+            ComponentCategory.objects.get_or_create(
+                name=cat_name,
+                defaults={'icon': 'Box'}
+            )
+
+        # Return all saved categories
+        categories = ComponentCategory.objects.all().order_by('name')
+        data = [{'name': c.name, 'icon': c.icon} for c in categories]
+        return Response(data)
+
+    def partial_update(self, request, pk=None):
+        """
+        PATCH /api/categories/{name}/
+        Body: { "icon": "Sparkles" }
+        """
+        name = pk
+        icon = request.data.get('icon')
+        if not icon:
+            return Response({'error': 'icon is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            category = ComponentCategory.objects.get(name=name)
+        except ComponentCategory.DoesNotExist:
+            category = ComponentCategory.objects.create(name=name, icon=icon)
+            return Response({'name': category.name, 'icon': category.icon}, status=status.HTTP_201_CREATED)
+
+        category.icon = icon
+        category.save()
+        return Response({'name': category.name, 'icon': category.icon})

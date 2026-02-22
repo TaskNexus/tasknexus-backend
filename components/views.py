@@ -37,6 +37,7 @@ class ComponentViewSet(viewsets.ViewSet):
             category = getattr(component_cls, 'category', 'Uncategorized')
             version = getattr(component_cls, 'version', '1.0')
             description = getattr(component_cls, 'description', '')
+            icon = getattr(component_cls, 'icon', '')
             
             # Get inputs/outputs schema
             # Instantiate service to get formats? Or access static methods?
@@ -82,6 +83,7 @@ class ComponentViewSet(viewsets.ViewSet):
                 'category': category,
                 'version': version,
                 'description': description,
+                'icon': icon,
                 'inputs': inputs,
                 'outputs': outputs
             })

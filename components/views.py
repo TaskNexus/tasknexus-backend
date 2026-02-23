@@ -115,7 +115,7 @@ class CategoryViewSet(viewsets.ViewSet):
         for cat_name in category_names:
             ComponentCategory.objects.get_or_create(
                 name=cat_name,
-                defaults={'icon': 'Box'}
+                defaults={'icon': 'Component'}
             )
 
         # Return all saved categories

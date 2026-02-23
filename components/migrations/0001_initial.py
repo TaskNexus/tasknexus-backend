@@ -16,7 +16,7 @@ class Migration(migrations.Migration):
             fields=[
                 ('id', models.AutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
                 ('name', models.CharField(max_length=100, unique=True, verbose_name='Category Name')),
-                ('icon', models.CharField(default='Box', max_length=100, verbose_name='Icon Name')),
+                ('icon', models.CharField(default='Component', max_length=100, verbose_name='Icon Name')),
             ],
             options={
                 'verbose_name': 'Component Category',

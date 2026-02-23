@@ -2,7 +2,7 @@ from django.db import models
 
 class ComponentCategory(models.Model):
     name = models.CharField(max_length=100, unique=True, verbose_name="Category Name")
-    icon = models.CharField(max_length=100, default='Box', verbose_name="Icon Name")
+    icon = models.CharField(max_length=100, default='Component', verbose_name="Icon Name")
     
     class Meta:
         verbose_name = "Component Category"

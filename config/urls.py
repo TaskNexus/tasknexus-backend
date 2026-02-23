@@ -18,12 +18,13 @@ from django.contrib import admin
 from django.urls import path, include
 from django.http import JsonResponse
 
+from tasks.feishu_views import FeishuUsersView
+from config.views import PlatformConfigView, FeishuLoginStatusView
+
 
 def health_check(request):
     return JsonResponse({"status": "ok"})
 
-
-from tasks.feishu_views import FeishuUsersView
 
 urlpatterns = [
     path('api/health/', health_check, name='health_check'),
@@ -38,4 +39,6 @@ urlpatterns = [
     path('api/ai/', include('agents.urls')),
     path('api/client-agents/', include('client_agents.urls')),
     path('api/feishu/users/', FeishuUsersView.as_view(), name='feishu-users'),
+    path('api/platform/config/', PlatformConfigView.as_view(), name='platform-config'),
+    path('api/platform/feishu-login-status/', FeishuLoginStatusView.as_view(), name='feishu-login-status'),
 ]

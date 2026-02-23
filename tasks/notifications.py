@@ -158,12 +158,13 @@ def _do_send_notification(task_id, task_name, status, notify_user_ids, workflow_
         template = notify_template.strip() if notify_template else DEFAULT_TEMPLATE
         message = render_template(template, variables)
         
-        import os
-        app_id = os.environ.get('FEISHU_APP_ID')
-        app_secret = os.environ.get('FEISHU_APP_SECRET')
+        from config.models import PlatformConfig
+        feishu_config = PlatformConfig.get_feishu_config()
+        app_id = feishu_config['app_id']
+        app_secret = feishu_config['app_secret']
         
         if not app_id or not app_secret:
-            logger.error("Cannot send notification: missing Feishu app credentials")
+            logger.error("Cannot send notification: missing Feishu app credentials in platform settings")
             return
         
         # Build lark client

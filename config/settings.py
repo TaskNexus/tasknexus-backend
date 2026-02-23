@@ -61,6 +61,7 @@ INSTALLED_APPS = [
     'plugins',
     'client_agents',
     'channels',
+    'config.apps.PlatformConfigApp',
 ]
 
 BAMBOO_DJANGO_DATABASE_CONNECTION_NAME = 'default'
@@ -241,7 +242,3 @@ SIMPLE_JWT = {
     'REFRESH_TOKEN_LIFETIME': timedelta(days=1),
 }
 
-# Feishu OAuth Configuration
-FEISHU_APP_ID = os.environ.get('FEISHU_APP_ID', '')
-FEISHU_APP_SECRET = os.environ.get('FEISHU_APP_SECRET', '')
-FEISHU_REDIRECT_URI = os.environ.get('FEISHU_REDIRECT_URI')

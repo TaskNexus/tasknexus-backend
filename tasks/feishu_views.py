@@ -6,7 +6,6 @@ Provides endpoints for interacting with Feishu (Lark) APIs,
 using direct HTTP requests for reliability and transparency.
 """
 
-import os
 import logging
 
 import requests as http_requests
@@ -22,11 +21,13 @@ def get_tenant_access_token():
     """
     Get a fresh tenant_access_token from Feishu.
     """
-    app_id = os.environ.get('FEISHU_APP_ID')
-    app_secret = os.environ.get('FEISHU_APP_SECRET')
+    from config.models import PlatformConfig
+    feishu_config = PlatformConfig.get_feishu_config()
+    app_id = feishu_config['app_id']
+    app_secret = feishu_config['app_secret']
     
     if not app_id or not app_secret:
-        return None, 'FEISHU_APP_ID 或 FEISHU_APP_SECRET 未配置'
+        return None, 'FEISHU_APP_ID 或 FEISHU_APP_SECRET 未配置，请在平台设置中配置'
     
     resp = http_requests.post(
         f'{FEISHU_BASE_URL}/auth/v3/tenant_access_token/internal',

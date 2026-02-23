@@ -30,9 +30,11 @@ class FeishuOAuthService:
     USER_INFO_URL = "https://open.feishu.cn/open-apis/authen/v1/user_info"
     
     def __init__(self):
-        self.app_id = settings.FEISHU_APP_ID
-        self.app_secret = settings.FEISHU_APP_SECRET
-        self.redirect_uri = settings.FEISHU_REDIRECT_URI
+        from config.models import PlatformConfig
+        feishu_config = PlatformConfig.get_feishu_config()
+        self.app_id = feishu_config['app_id']
+        self.app_secret = feishu_config['app_secret']
+        self.redirect_uri = feishu_config['redirect_uri']
     
     def get_authorize_url(self, state: str = None) -> str:
         """

@@ -10,6 +10,7 @@ from .filters import TaskInstanceFilter
 from bamboo_engine import api as bamboo_api
 from pipeline.eri.runtime import BambooDjangoRuntime
 from pipeline.core.data.library import VariableLibrary
+from config.permissions import check_project_permission
 
 logger = logging.getLogger('django')
 
@@ -29,6 +30,12 @@ class TaskViewSet(viewsets.ModelViewSet):
         """
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+
+        # Permission check: Reporter+ can create tasks
+        workflow = serializer.validated_data.get('workflow')
+        if workflow and workflow.project:
+            check_project_permission(request.user, workflow.project, 'task.create')
+
         task = serializer.save()
 
         try:
@@ -54,6 +61,9 @@ class TaskViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def pause(self, request, pk=None):
         task = self.get_object()
+        # Permission: Maintainer+ for all, others for own
+        if task.workflow and task.workflow.project:
+            check_project_permission(request.user, task.workflow.project, 'task.operate', task)
         if not task.pipeline_id:
             return Response({'error': 'Task has no pipeline_id'}, status=status.HTTP_400_BAD_REQUEST)
         
@@ -68,6 +78,9 @@ class TaskViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def resume(self, request, pk=None):
         task = self.get_object()
+        # Permission: Maintainer+ for all, others for own
+        if task.workflow and task.workflow.project:
+            check_project_permission(request.user, task.workflow.project, 'task.operate', task)
         if not task.pipeline_id:
             return Response({'error': 'Task has no pipeline_id'}, status=status.HTTP_400_BAD_REQUEST)
             
@@ -82,6 +95,9 @@ class TaskViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def revoke(self, request, pk=None):
         task = self.get_object()
+        # Permission: Maintainer+ for all, others for own
+        if task.workflow and task.workflow.project:
+            check_project_permission(request.user, task.workflow.project, 'task.operate', task)
         if not task.pipeline_id:
             return Response({'error': 'Task has no pipeline_id'}, status=status.HTTP_400_BAD_REQUEST)
             
@@ -313,8 +329,14 @@ class TaskViewSet(viewsets.ModelViewSet):
             return Response({'error': 'No ids provided'}, status=status.HTTP_400_BAD_REQUEST)
         
         try:
-            # Filter and delete
-            TaskInstance.objects.filter(id__in=ids).delete()
+            tasks = TaskInstance.objects.filter(id__in=ids)
+            for task in tasks:
+                # Permission: Maintainer+ for all, others for own
+                if task.workflow and task.workflow.project:
+                    check_project_permission(
+                        request.user, task.workflow.project, 'task.delete', task
+                    )
+            tasks.delete()
             return Response({'status': 'success', 'message': f'Deleted {len(ids)} tasks'})
         except Exception as e:
             logger.exception("Failed to bulk delete tasks")
@@ -328,9 +350,34 @@ class PeriodicTaskViewSet(viewsets.ModelViewSet):
     queryset = PeriodicTask.objects.all()
     serializer_class = PeriodicTaskSerializer
     
+    def perform_create(self, serializer):
+        # Reporter+ can create
+        workflow = serializer.validated_data.get('workflow')
+        if workflow and workflow.project:
+            check_project_permission(self.request.user, workflow.project, 'scheduled_task.create')
+        serializer.save()
+
+    def perform_update(self, serializer):
+        instance = self.get_object()
+        if instance.workflow and instance.workflow.project:
+            check_project_permission(
+                self.request.user, instance.workflow.project, 'scheduled_task.edit', instance
+            )
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        if instance.workflow and instance.workflow.project:
+            check_project_permission(
+                self.request.user, instance.workflow.project, 'scheduled_task.delete', instance
+            )
+        instance.delete()
+
     @action(detail=True, methods=['post'])
     def toggle(self, request, pk=None):
         task = self.get_object()
+        # Permission: Maintainer+ for all, others for own
+        if task.workflow and task.workflow.project:
+            check_project_permission(request.user, task.workflow.project, 'scheduled_task.edit', task)
         task.enabled = not task.enabled
         task.save()
         
@@ -368,6 +415,27 @@ from .serializers import ScheduledTaskSerializer
 class ScheduledTaskViewSet(viewsets.ModelViewSet):
     queryset = ScheduledTask.objects.all()
     serializer_class = ScheduledTaskSerializer
+
+    def perform_create(self, serializer):
+        workflow = serializer.validated_data.get('workflow')
+        if workflow and workflow.project:
+            check_project_permission(self.request.user, workflow.project, 'scheduled_task.create')
+        serializer.save()
+
+    def perform_update(self, serializer):
+        instance = self.get_object()
+        if instance.workflow and instance.workflow.project:
+            check_project_permission(
+                self.request.user, instance.workflow.project, 'scheduled_task.edit', instance
+            )
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        if instance.workflow and instance.workflow.project:
+            check_project_permission(
+                self.request.user, instance.workflow.project, 'scheduled_task.delete', instance
+            )
+        instance.delete()
     
     @action(detail=True, methods=['get'])
     def history(self, request, pk=None):
@@ -392,11 +460,34 @@ from .serializers import WebhookTaskSerializer
 class WebhookTaskViewSet(viewsets.ModelViewSet):
     queryset = WebhookTask.objects.all()
     serializer_class = WebhookTaskSerializer
-    
+
+    def perform_create(self, serializer):
+        workflow = serializer.validated_data.get('workflow')
+        if workflow and workflow.project:
+            check_project_permission(self.request.user, workflow.project, 'scheduled_task.create')
+        serializer.save()
+
+    def perform_update(self, serializer):
+        instance = self.get_object()
+        if instance.workflow and instance.workflow.project:
+            check_project_permission(
+                self.request.user, instance.workflow.project, 'scheduled_task.edit', instance
+            )
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        if instance.workflow and instance.workflow.project:
+            check_project_permission(
+                self.request.user, instance.workflow.project, 'scheduled_task.delete', instance
+            )
+        instance.delete()
+
     @action(detail=True, methods=['post'])
     def toggle(self, request, pk=None):
         """Enable/Disable Webhook"""
         task = self.get_object()
+        if task.workflow and task.workflow.project:
+            check_project_permission(request.user, task.workflow.project, 'scheduled_task.edit', task)
         task.enabled = not task.enabled
         task.save()
         return Response({'status': 'success', 'enabled': task.enabled})
@@ -405,6 +496,8 @@ class WebhookTaskViewSet(viewsets.ModelViewSet):
     def regenerate_token(self, request, pk=None):
         """Regenerate Token"""
         task = self.get_object()
+        if task.workflow and task.workflow.project:
+            check_project_permission(request.user, task.workflow.project, 'scheduled_task.edit', task)
         task.regenerate_token()
         serializer = self.get_serializer(task)
         return Response(serializer.data)

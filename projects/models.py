@@ -28,14 +28,14 @@ class Project(models.Model):
 class ProjectMember(models.Model):
     ROLE_CHOICES = (
         ('OWNER', 'Owner'),
-        ('ADMIN', 'Admin'),
+        ('MAINTAINER', 'Maintainer'),
         ('DEVELOPER', 'Developer'),
-        ('VIEWER', 'Viewer'),
+        ('REPORTER', 'Reporter'),
     )
 
     project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name='members')
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='project_memberships')
-    role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='VIEWER')
+    role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='REPORTER')
     
     created_at = models.DateTimeField(auto_now_add=True)
 

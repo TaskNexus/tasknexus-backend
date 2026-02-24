@@ -40,37 +40,53 @@ class UserViewSet(viewsets.ModelViewSet):
         return queryset
 
     def perform_destroy(self, instance):
+        from config.permissions import check_platform_permission, has_role_level
         user = self.request.user
-        if not user.is_staff and not user.is_superuser:
-            from rest_framework.exceptions import PermissionDenied
-            raise PermissionDenied("Only Admin/Owner can delete users.")
-        
-        # Admin cannot delete Superuser
-        if instance.is_superuser:
+
+        # Must have platform.user_delete permission (Maintainer+)
+        check_platform_permission(user, 'platform.user_delete')
+
+        # Cannot delete Owner
+        if instance.platform_role == 'OWNER':
             from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied("Cannot delete Owner.")
 
-        # Admin cannot delete other Admins ?? (Assuming Owner deletes Admins)
-        if instance.is_staff and not user.is_superuser:
-             from rest_framework.exceptions import PermissionDenied
-             raise PermissionDenied("Only Owner can delete Admins.")
+        # Maintainer cannot delete other Maintainers (need higher role)
+        if not has_role_level(user.platform_role, 'OWNER') and \
+           has_role_level(instance.platform_role, user.platform_role):
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("Cannot delete users with the same or higher role.")
 
         instance.delete()
 
     def perform_update(self, serializer):
+        from config.permissions import check_platform_permission, has_role_level
         user = self.request.user
-        if not user.is_staff and not user.is_superuser:
-            from rest_framework.exceptions import PermissionDenied
-            raise PermissionDenied("Only Admin/Owner can modify users.")
-        
-        # Check targets
+
+        # Must have platform.user_manage permission (Maintainer+)
+        check_platform_permission(user, 'platform.user_manage')
+
         instance = self.get_object()
-        
-        # Prevent modification of Superuser by non-Superuser
-        if instance.is_superuser and not user.is_superuser:
+
+        # Cannot modify users with same or higher role (unless you are Owner)
+        if not has_role_level(user.platform_role, 'OWNER') and \
+           has_role_level(instance.platform_role, user.platform_role):
             from rest_framework.exceptions import PermissionDenied
-            raise PermissionDenied("Only Owner can modify Owner.")
-        
+            raise PermissionDenied("Cannot modify users with the same or higher role.")
+
+        # Sync is_staff/is_superuser flags for Django admin compatibility
+        new_role = serializer.validated_data.get('platform_role')
+        if new_role:
+            if new_role == 'OWNER':
+                serializer.validated_data['is_superuser'] = True
+                serializer.validated_data['is_staff'] = True
+            elif new_role == 'MAINTAINER':
+                serializer.validated_data['is_superuser'] = False
+                serializer.validated_data['is_staff'] = True
+            else:
+                serializer.validated_data['is_superuser'] = False
+                serializer.validated_data['is_staff'] = False
+
         serializer.save()
 
 

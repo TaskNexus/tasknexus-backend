@@ -8,17 +8,13 @@ class UserSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ('id', 'username', 'email', 'password', 'first_name', 'last_name', 'is_staff', 'is_superuser', 'date_joined', 'role')
+        fields = ('id', 'username', 'email', 'password', 'first_name', 'last_name', 'is_staff', 'is_superuser', 'date_joined', 'role', 'platform_role')
         read_only_fields = ('date_joined',)
 
     role = serializers.SerializerMethodField()
 
     def get_role(self, obj):
-        if obj.is_superuser:
-            return 'OWNER'
-        if obj.is_staff:
-            return 'ADMIN'
-        return 'MEMBER'
+        return obj.platform_role
 
     def create(self, validated_data):
         user = User.objects.create_user(

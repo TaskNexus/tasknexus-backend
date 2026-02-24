@@ -1,6 +1,10 @@
 from rest_framework import viewsets, permissions
-from .models import Project
-from .serializers import ProjectSerializer
+from .models import Project, ProjectMember
+from .serializers import ProjectSerializer, ProjectMemberSerializer
+from config.permissions import check_project_permission, check_platform_permission
+from rest_framework.decorators import action
+from django.shortcuts import get_object_or_404
+
 
 class ProjectViewSet(viewsets.ModelViewSet):
     """
@@ -11,95 +15,59 @@ class ProjectViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-        if user.is_superuser:
+        if user.platform_role == 'OWNER':
             return Project.objects.all()
         # Only projects where user is a member
         return Project.objects.filter(members__user=user)
 
     def perform_create(self, serializer):
+        # Permission: controlled by permission matrix 'platform.project_create'
+        check_platform_permission(self.request.user, 'platform.project_create')
         project = serializer.save(created_by=self.request.user)
         # Add creator as OWNER
         ProjectMember.objects.create(project=project, user=self.request.user, role='OWNER')
 
     def perform_update(self, serializer):
         instance = self.get_object()
-        user = self.request.user
-        if not user.is_superuser:
-             membership = ProjectMember.objects.filter(project=instance, user=user).first()
-             if not membership or membership.role not in ['OWNER', 'ADMIN']:
-                  from rest_framework.exceptions import PermissionDenied
-                  raise PermissionDenied("Only Project Owner/Admin can edit project details.")
+        check_project_permission(self.request.user, instance, 'project.edit')
         serializer.save()
 
     def perform_destroy(self, instance):
-        user = self.request.user
-        if not user.is_superuser:
-             membership = ProjectMember.objects.filter(project=instance, user=user).first()
-             if not membership or membership.role != 'OWNER':
-                  from rest_framework.exceptions import PermissionDenied
-                  raise PermissionDenied("Only Project Owner can delete the project.")
+        check_project_permission(self.request.user, instance, 'project.delete')
         instance.delete()
 
-
-from .models import ProjectMember
-from .serializers import ProjectMemberSerializer
-from rest_framework.decorators import action
-from django.shortcuts import get_object_or_404
 
 class ProjectMemberViewSet(viewsets.ModelViewSet):
     serializer_class = ProjectMemberSerializer
     permission_classes = [permissions.IsAuthenticated]
-    
+
     def get_queryset(self):
-        # Filter by project_id in query params if provided check permissions
         queryset = ProjectMember.objects.all()
         project_id = self.request.query_params.get('project_id')
         if project_id:
-             queryset = queryset.filter(project_id=project_id)
-             
-        # Security: Can I see members? Only if I am a member of the project?
-        # For simplicity, if basic member, can see other members.
+            queryset = queryset.filter(project_id=project_id)
+
         user = self.request.user
-        if not user.is_superuser:
-             # Only memberships of projects where the user is also a member
-             # Use subquery or simple logic
-             user_projects = Project.objects.filter(members__user=user)
-             queryset = queryset.filter(project__in=user_projects)
-             
+        if user.platform_role != 'OWNER':
+            user_projects = Project.objects.filter(members__user=user)
+            queryset = queryset.filter(project__in=user_projects)
+
         return queryset
 
     def perform_create(self, serializer):
-        # Check if request.user is ADMIN or OWNER of the project
         project = serializer.validated_data['project']
-        user = self.request.user
-        if not user.is_superuser:
-             membership = ProjectMember.objects.filter(project=project, user=user).first()
-             if not membership or membership.role not in ['OWNER', 'ADMIN']:
-                  from rest_framework.exceptions import PermissionDenied
-                  raise PermissionDenied("Only Project Admin/Owner can add members.")
-        
+        check_project_permission(self.request.user, project, 'member.manage')
         serializer.save()
 
     def perform_update(self, serializer):
-        # Check permissions
         obj = self.get_object()
-        user = self.request.user
-        if not user.is_superuser:
-             membership = ProjectMember.objects.filter(project=obj.project, user=user).first()
-             if not membership or membership.role not in ['OWNER', 'ADMIN']:
-                  from rest_framework.exceptions import PermissionDenied
-                  raise PermissionDenied("Only Project Admin/Owner can update members.")
+        check_project_permission(self.request.user, obj.project, 'member.manage')
         serializer.save()
 
     def perform_destroy(self, instance):
-        # Check permissions
-        user = self.request.user
-        if not user.is_superuser:
-             membership = ProjectMember.objects.filter(project=instance.project, user=user).first()
-             if not membership or membership.role not in ['OWNER', 'ADMIN']:
-                  from rest_framework.exceptions import PermissionDenied
-                  raise PermissionDenied("Only Project Admin/Owner can remove members.")
+        check_project_permission(self.request.user, instance.project, 'member.manage')
         instance.delete()
+
 
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -113,24 +81,22 @@ class DashboardStatsView(APIView):
 
     def get(self, request):
         # 1. Recent Projects (Limit 4)
-        if request.user.is_superuser:
+        if request.user.platform_role == 'OWNER':
             projects = Project.objects.all().order_by('-created_at')[:4]
             workflows = WorkflowDefinition.objects.all().order_by('-updated_at')[:4]
         else:
              projects = Project.objects.filter(members__user=request.user).order_by('-created_at')[:4]
              workflows = WorkflowDefinition.objects.filter(project__members__user=request.user).order_by('-updated_at')[:4]
-        
+
         project_data = ProjectSerializer(projects, many=True).data
-        
+
         # 2. Recent Tasks (Limit 5)
-        # Filter by user if needed? Dashboard usually shows global or user's scope.
-        # "My Tasks" implies created_by=user.
         tasks = TaskInstance.objects.filter(created_by=request.user).order_by('-created_at')[:5]
         task_data = TaskInstanceSerializer(tasks, many=True).data
-        
+
         # 3. Recent Workflows (Common Flows) (Limit 4)
         workflow_data = WorkflowDefinitionSerializer(workflows, many=True).data
-        
+
         return Response({
             'projects': project_data,
             'tasks': task_data,

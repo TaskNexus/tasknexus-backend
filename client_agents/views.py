@@ -1,8 +1,11 @@
 import logging
+from pathlib import Path
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from django.http import HttpResponse
 from .models import ClientAgent, AgentWorkspace, AgentTask
+from .consumers import AGENT_LOG_DIR
 from .serializers import (
     ClientAgentSerializer, 
     ClientAgentCreateSerializer,
@@ -130,3 +133,25 @@ class AgentTaskViewSet(viewsets.ModelViewSet):
             {'error': '只能取消待分发或已分发的任务'},
             status=status.HTTP_400_BAD_REQUEST
         )
+
+    @action(detail=True, methods=['get'])
+    def log(self, request, pk=None):
+        """获取任务日志文件内容"""
+        task = self.get_object()
+        log_path = AGENT_LOG_DIR / f"task_{task.id}.log"
+        
+        if log_path.exists():
+            content = log_path.read_text(encoding='utf-8', errors='replace')
+            return Response({
+                'task_id': task.id,
+                'status': task.status,
+                'content': content,
+            })
+        
+        # Fallback to DB stdout
+        return Response({
+            'task_id': task.id,
+            'status': task.status,
+            'content': task.stdout or '',
+        })
+

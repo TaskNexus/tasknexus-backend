@@ -1,11 +1,18 @@
 import json
 import logging
+import os
 from datetime import datetime
+from pathlib import Path
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from channels.db import database_sync_to_async
 from django.utils import timezone
+from django.conf import settings
 
 logger = logging.getLogger('django')
+
+# Log directory for agent task logs
+AGENT_LOG_DIR = Path(settings.BASE_DIR) / 'agent_logs'
+AGENT_LOG_DIR.mkdir(exist_ok=True)
 
 
 class AgentConsumer(AsyncJsonWebsocketConsumer):
@@ -118,15 +125,29 @@ class AgentConsumer(AsyncJsonWebsocketConsumer):
                 status='RUNNING',
                 started_at=timezone.now()
             )
+            # Create/clear log file
+            await self._init_log_file(task_id)
             logger.info(f"Agent {self.agent.name} started task {task_id}")
 
     async def handle_task_progress(self, content):
         """Process task progress updates."""
         task_id = content.get('task_id')
         output = content.get('output', '')
+        is_stderr = content.get('is_stderr', False)
         
         if task_id:
             await self.append_agent_task_output(task_id, output)
+            # Write to log file
+            await self._append_log_file(task_id, output)
+            # Broadcast to frontend log subscribers
+            await self.channel_layer.group_send(
+                f"agent_task_log_{task_id}",
+                {
+                    "type": "log_dispatch",
+                    "line": output,
+                    "is_stderr": is_stderr,
+                }
+            )
 
     async def handle_task_completed(self, content):
         """Process task completion notification."""
@@ -148,6 +169,20 @@ class AgentConsumer(AsyncJsonWebsocketConsumer):
                 result={'exit_code': exit_code},
                 finished_at=timezone.now()
             )
+            # Write final status to log file
+            status_line = f"\n===== Task {status} (exit code: {exit_code}) ====="
+            await self._append_log_file(task_id, status_line)
+            # Notify frontend log subscribers that task is done
+            await self.channel_layer.group_send(
+                f"agent_task_log_{task_id}",
+                {
+                    "type": "log_dispatch",
+                    "line": status_line,
+                    "is_stderr": False,
+                    "finished": True,
+                    "exit_code": exit_code,
+                }
+            )
             logger.info(f"Agent {self.agent.name} completed task {task_id} with exit code {exit_code}")
 
     async def handle_task_failed(self, content):
@@ -162,6 +197,19 @@ class AgentConsumer(AsyncJsonWebsocketConsumer):
                 error_message=error,
                 finished_at=timezone.now()
             )
+            # Write error to log file
+            error_line = f"\n===== Task FAILED: {error} ====="
+            await self._append_log_file(task_id, error_line)
+            # Notify frontend
+            await self.channel_layer.group_send(
+                f"agent_task_log_{task_id}",
+                {
+                    "type": "log_dispatch",
+                    "line": error_line,
+                    "is_stderr": True,
+                    "finished": True,
+                }
+            )
             logger.error(f"Agent {self.agent.name} failed task {task_id}: {error}")
 
     # ===== Channel Layer Message Handlers =====
@@ -174,6 +222,7 @@ class AgentConsumer(AsyncJsonWebsocketConsumer):
             "workspace_name": event.get("workspace_name", ""),
             "client_repo_url": event.get("client_repo_url", ""),
             "client_repo_ref": event.get("client_repo_ref", "main"),
+            "client_repo_token": event.get("client_repo_token", ""),
             "command": event["command"],
             "timeout": event.get("timeout", 3600),
             "environment": event.get("environment", {}),
@@ -270,3 +319,30 @@ class AgentConsumer(AsyncJsonWebsocketConsumer):
                     update_fields['agent_version'] = system_info['agent_version']
             
             ClientAgent.objects.filter(id=self.agent.id).update(**update_fields)
+
+    # ===== Log File Operations =====
+
+    @staticmethod
+    def _get_log_path(task_id):
+        """Get the log file path for a given task."""
+        return AGENT_LOG_DIR / f"task_{task_id}.log"
+
+    @database_sync_to_async
+    def _init_log_file(self, task_id):
+        """Create or clear the log file for a task."""
+        log_path = self._get_log_path(task_id)
+        try:
+            with open(log_path, 'w') as f:
+                f.write(f"===== Task {task_id} started at {timezone.now().isoformat()} =====\n")
+        except Exception as e:
+            logger.error(f"Failed to init log file for task {task_id}: {e}")
+
+    @database_sync_to_async
+    def _append_log_file(self, task_id, content):
+        """Append content to the log file for a task."""
+        log_path = self._get_log_path(task_id)
+        try:
+            with open(log_path, 'a') as f:
+                f.write(content + '\n')
+        except Exception as e:
+            logger.error(f"Failed to append to log file for task {task_id}: {e}")

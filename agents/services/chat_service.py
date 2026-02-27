@@ -5,6 +5,7 @@ Orchestrates the chat session, AI client interaction, and tool execution.
 Refactored from backend/chat/views.py
 """
 
+import json
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -100,9 +101,23 @@ class ChatService:
         # 4. Prepare Context
         context_messages = self._build_context()
         
-        # 5. Prepare Tools
-        tools = get_tools()
-        tool_executor = ToolExecutor(project_id=pid, user=self.user)
+        # 5. Prepare Tools (built-in + MCP with skill-based filtering)
+        mcp_bridge = None
+        try:
+            from ..mcp.tool_bridge import MCPToolBridge
+            mcp_bridge = MCPToolBridge()
+            # Only get meta-tools for initial context; content tools held back
+            skill_meta_tools, _ = mcp_bridge.get_mcp_tools_by_skill(project_id=pid)
+            if skill_meta_tools:
+                mcp_bridge.connect()
+        except Exception as e:
+            logger.warning(f"Failed to load MCP tools: {e}")
+            skill_meta_tools = []
+        
+        tools = get_tools(mcp_tools=skill_meta_tools)
+        activated_tool_names = set()
+        
+        tool_executor = ToolExecutor(project_id=pid, user=self.user, mcp_bridge=mcp_bridge)
         
         # 6. Multi-turn Loop
         MAX_ITERATIONS = 10
@@ -136,26 +151,50 @@ class ChatService:
                 }
                 context_messages.append(assistant_msg)
                 
+                # Build detailed tool call info for frontend
+                calls_detail = []
+                for tc in tool_calls:
+                    if hasattr(tc, 'function'):
+                        fname = tc.function.name
+                        fargs = tc.function.arguments
+                    else:
+                        fname = tc.get('function', {}).get('name', '')
+                        fargs = tc.get('function', {}).get('arguments', '{}')
+                    
+                    # Parse arguments string to dict for display
+                    try:
+                        args_dict = json.loads(fargs) if isinstance(fargs, str) else (fargs or {})
+                    except (json.JSONDecodeError, TypeError):
+                        args_dict = {}
+                    
+                    calls_detail.append({
+                        'name': fname,
+                        'arguments': args_dict
+                    })
+                
+                call_names = [c['name'] for c in calls_detail]
+                
                 if not content:
-                    # Persist marker for tool calls
-                    call_descs = []
-                    for tc in tool_calls:
-                        fname = tc.function.name if hasattr(tc, 'function') else tc.get('function', {}).get('name')
-                        call_descs.append(fname)
-                        
+                    tool_desc = f"[Requesting Tools: {', '.join(call_names)}]"
                     ChatMessage.objects.create(
                         session=self.session,
                         role='tool',
-                        content=f"[Requesting Tools: {', '.join(call_descs)}]"
+                        content=tool_desc
                     )
                 else:
-                    msg = ChatMessage.objects.create(
+                    ChatMessage.objects.create(
                         session=self.session,
                         role='assistant',
                         content=content
                     )
-                    # Yield the intermediate message immediately
                     yield {'type': 'message', 'role': 'assistant', 'content': content}
+                
+                # Yield tool_call event with full details
+                yield {
+                    'type': 'tool_call',
+                    'calls': calls_detail,
+                    'status': 'calling'
+                }
                 
                 # Execute tools
                 tool_results = tool_executor.execute_calls(tool_calls)
@@ -163,13 +202,59 @@ class ChatService:
                 # Append results to context
                 context_messages.extend(tool_results)
                 
-                # Persist results
+                # Check if activate_skill was called — dynamically expand tools
+                for res in tool_results:
+                    if res.get('name') == 'activate_skill':
+                        try:
+                            activation = json.loads(res.get('content', '{}'))
+                            if not activation.get('activated'):
+                                continue
+                            
+                            source = activation.get('source', '')
+                            new_tools = []
+                            
+                            if source == 'builtin':
+                                # Built-in skill: get tool defs from definitions
+                                from ..tools.definitions import get_builtin_skill_tools
+                                new_tools = get_builtin_skill_tools(
+                                    activation.get('skill_id', '')
+                                ) or []
+                            elif source == 'mcp' and mcp_bridge:
+                                # MCP skill: get tool defs from held-back pool
+                                new_tools = mcp_bridge.activate_skill_tools(
+                                    activation.get('tools', [])
+                                )
+                            
+                            for t in new_tools:
+                                fname = t.get('function', {}).get('name', '')
+                                if fname and fname not in activated_tool_names:
+                                    tools.append(t)
+                                    activated_tool_names.add(fname)
+                            
+                            logger.info(
+                                f"Skill '{activation.get('skill_id')}' ({source}) activated: "
+                                f"+{len(new_tools)} tools, total: {len(tools)}"
+                            )
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+                
+                # Persist and yield results
+                results_detail = []
                 for res in tool_results:
                     ChatMessage.objects.create(
                         session=self.session,
                         role='tool',
                         content=f"[Tool Result for {res['name']}]: {res['content']}"
                     )
+                    results_detail.append({
+                        'name': res['name'],
+                        'content': res['content'][:2000]  # Truncate for display
+                    })
+                
+                yield {
+                    'type': 'tool_result',
+                    'results': results_detail
+                }
                 
                 iteration += 1
                 continue
@@ -190,7 +275,11 @@ class ChatService:
             
         self.session.save() # Update timestamp
         
-        # 8. Check Summary
+        # 8. Close MCP connections
+        if mcp_bridge:
+            mcp_bridge.close()
+        
+        # 9. Check Summary
         self._check_and_summarize(request_model)
         
         # 9. Signal completion
@@ -240,6 +329,16 @@ class ChatService:
                 "role": "system", 
                 "content": f"Previous conversation summary: {self.session.summary}"
             })
+        
+        # Skill mode hint: guide AI to discover and load skills on-demand
+        context_messages.append({
+            "role": "system",
+            "content": (
+                "你可以通过 list_skills 和 read_skill 工具发现和加载技能包(Skills)。"
+                "技能包包含工具的使用指南和最佳实践。"
+                "在使用浏览器等复杂工具前，建议先 read_skill 获取对应技能包的使用指南。"
+            )
+        })
             
         for m in recent_messages:
             role = m.role

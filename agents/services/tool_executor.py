@@ -19,10 +19,11 @@ class ToolExecutor:
     Executes tools requested by the AI.
     """
     
-    def __init__(self, project_id: int, user: Any):
+    def __init__(self, project_id: int, user: Any, mcp_bridge=None):
         self.project_id = project_id
         self.user = user
         self.functions = available_functions
+        self.mcp_bridge = mcp_bridge
 
     def execute_calls(self, tool_calls: List[Any]) -> List[Dict[str, Any]]:
         """
@@ -73,6 +74,15 @@ class ToolExecutor:
 
     def _execute_single(self, function_name: str, args: Dict[str, Any]) -> str:
         """Execute a single function with context injection."""
+        # MCP tool: server_id__tool_name
+        if "__" in function_name and self.mcp_bridge:
+            server_id, tool_name = function_name.split("__", 1)
+            # Inject session_id for user isolation
+            if self.user:
+                args['session_id'] = f"user_{self.user.id}"
+            logger.info(f"Executing MCP tool: {server_id}/{tool_name} with args: {args}")
+            return self.mcp_bridge.call_tool(server_id, tool_name, args)
+        
         function_to_call = self.functions.get(function_name)
         
         if not function_to_call:
@@ -86,6 +96,9 @@ class ToolExecutor:
             
         if 'user' in sig.parameters:
             args['user'] = self.user
+        
+        if 'mcp_bridge' in sig.parameters:
+            args['mcp_bridge'] = self.mcp_bridge
             
         try:
             result = function_to_call(**args)

@@ -1,10 +1,12 @@
+import json
+import logging
 from django.utils import timezone
-from rest_framework.request import Request
 from rest_framework.test import APIRequestFactory
 
 from workflows.models import WorkflowDefinition
-from projects.models import Project
-from tasks.serializers import CreateTaskSerializer, PeriodicTaskSerializer, ScheduledTaskSerializer
+from .definitions import BUILTIN_SKILLS, get_builtin_skill_tools
+
+logger = logging.getLogger('django')
 
 
 def get_current_time(**kwargs):
@@ -66,11 +68,11 @@ def get_workflow_info(workflow_id, project_id=None, **kwargs):
 def create_normal_task(workflow_id, name, variables=None, project_id=None, user=None, **kwargs):
     if not user: return "Error: User context required."
     
-    # Mock request for serializer context
     factory = APIRequestFactory()
     request = factory.post('/')
     request.user = user
     
+    from tasks.serializers import CreateTaskSerializer
     data = {
         "workflow": workflow_id,
         "name": name,
@@ -81,7 +83,6 @@ def create_normal_task(workflow_id, name, variables=None, project_id=None, user=
     if serializer.is_valid():
         task = serializer.save()
         
-        # Start execution
         from tasks.tasks import start_task_execution
         success, error = start_task_execution(task)
         
@@ -95,7 +96,6 @@ def create_normal_task(workflow_id, name, variables=None, project_id=None, user=
 def create_periodic_task(workflow_id, name, cron_expression, variables=None, enabled=True, project_id=None, user=None, **kwargs):
     if not user: return "Error: User context required."
     
-    # Parse cron
     parts = cron_expression.split()
     if len(parts) != 5:
         return "Error: Invalid cron expression. Must have 5 parts (minute hour day month day_of_week)."
@@ -106,10 +106,11 @@ def create_periodic_task(workflow_id, name, cron_expression, variables=None, ena
     request = factory.post('/')
     request.user = user
     
+    from tasks.serializers import PeriodicTaskSerializer
     data = {
         "workflow": workflow_id,
         "name": name,
-        "cron_expression": cron_expression, # Not directly used by serializer logic we wrote earlier, but we need to map it
+        "cron_expression": cron_expression,
         "minute": minute,
         "hour": hour,
         "day_of_month": day_of_month,
@@ -132,6 +133,7 @@ def create_scheduled_task(workflow_id, name, execution_time, variables=None, pro
     request = factory.post('/')
     request.user = user
     
+    from tasks.serializers import ScheduledTaskSerializer
     data = {
         "workflow": workflow_id,
         "name": name,
@@ -146,7 +148,80 @@ def create_scheduled_task(workflow_id, name, execution_time, variables=None, pro
     return f"Error creating scheduled task: {serializer.errors}"
 
 
-# Registry of available functions for easy lookup
+# === Skill Meta-Tool Handlers ===
+
+def list_skills(mcp_bridge=None, project_id=None, **kwargs):
+    """List all available skills (built-in + MCP)."""
+    skills = []
+    
+    # Built-in skills
+    for skill_id, skill in BUILTIN_SKILLS.items():
+        tool_names = [t['function']['name'] for t in skill['tools']]
+        skills.append({
+            "id": skill_id,
+            "name": skill["name"],
+            "description": skill["description"],
+            "source": "builtin",
+            "tools_count": len(skill["tools"]),
+            "tools": tool_names,
+            "auto_activate": skill.get("auto_activate", False),
+        })
+    
+    # MCP skills (via mcp_bridge)
+    if mcp_bridge:
+        try:
+            # Find the server_id for the MCP server that has list_skills
+            for server_id in mcp_bridge._server_configs:
+                try:
+                    result = mcp_bridge.call_tool(server_id, "list_skills", {})
+                    # Parse MCP list_skills response and add source info
+                    skills.append({
+                        "source": "mcp",
+                        "server_id": server_id,
+                        "raw": result,
+                    })
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.warning(f"Failed to list MCP skills: {e}")
+    
+    return skills
+
+
+def activate_skill(skill_id, mcp_bridge=None, **kwargs):
+    """Activate a skill (built-in or MCP)."""
+    # Check built-in skills first
+    tools = get_builtin_skill_tools(skill_id)
+    if tools is not None:
+        tool_names = [t['function']['name'] for t in tools]
+        return {
+            "activated": True,
+            "skill_id": skill_id,
+            "source": "builtin",
+            "tools": tool_names,
+            "message": f"内置技能包 '{BUILTIN_SKILLS[skill_id]['name']}' 已激活，"
+                       f"包含 {len(tool_names)} 个工具: {', '.join(tool_names)}"
+        }
+    
+    # Try MCP skills
+    if mcp_bridge:
+        for server_id in mcp_bridge._server_configs:
+            try:
+                result = mcp_bridge.call_tool(server_id, "activate_skill", {"skill_id": skill_id})
+                activation = json.loads(result)
+                if activation.get('activated'):
+                    activation['source'] = 'mcp'
+                    return activation
+            except Exception:
+                continue
+    
+    return {
+        "activated": False,
+        "error": f"技能包 '{skill_id}' 不存在。请先调用 list_skills 查看可用技能包。"
+    }
+
+
+# Registry of available functions
 available_functions = {
     "get_current_time": get_current_time,
     "list_workflows": list_workflows,
@@ -154,4 +229,6 @@ available_functions = {
     "create_normal_task": create_normal_task,
     "create_periodic_task": create_periodic_task,
     "create_scheduled_task": create_scheduled_task,
+    "list_skills": list_skills,
+    "activate_skill": activate_skill,
 }

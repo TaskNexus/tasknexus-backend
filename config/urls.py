@@ -37,6 +37,7 @@ urlpatterns = [
     path('api/components/', include('components.urls')),
     path('api/categories/', include('components.category_urls')),
     path('api/ai/', include('agents.urls')),
+    path('api/mcp/', include('agents.mcp_urls')),
     path('api/client-agents/', include('client_agents.urls')),
     path('api/feishu/users/', FeishuUsersView.as_view(), name='feishu-users'),
     path('api/platform/config/', PlatformConfigView.as_view(), name='platform-config'),

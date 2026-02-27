@@ -175,6 +175,12 @@ CELERY_IMPORTS = (
 CELERY_TIMEZONE = 'Asia/Shanghai'
 CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
 
+# ---- Worker Memory Optimization ----
+# 每个worker进程执行500个任务后自动重启，防止内存泄漏累积
+CELERY_WORKER_MAX_TASKS_PER_CHILD = 500
+# 降低预取数量，减少内存中缓存的任务消息
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1
+
 CACHES = {
     "default": {
         "BACKEND": "django_redis.cache.RedisCache",

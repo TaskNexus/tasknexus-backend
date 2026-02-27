@@ -198,7 +198,8 @@ class FeishuOAuthViewSet(viewsets.ViewSet):
             
             if not user:
                 # Create new user with Feishu info
-                username = f"feishu_{open_id[:8]}"
+                # Use Feishu display name as username, fallback to feishu_{open_id[:8]}
+                username = name if name else f"feishu_{open_id[:8]}"
                 # Ensure unique username
                 base_username = username
                 counter = 1

@@ -50,14 +50,6 @@ DEFAULT_PERMISSION_MATRIX = {
     'task.delete_own':       'REPORTER',
     'task.delete_all':       'MAINTAINER',
 
-    # Periodic / Scheduled / Webhook Task
-    'scheduled_task.view':       'REPORTER',
-    'scheduled_task.create':     'REPORTER',
-    'scheduled_task.edit_own':   'REPORTER',
-    'scheduled_task.edit_all':   'MAINTAINER',
-    'scheduled_task.delete_own': 'REPORTER',
-    'scheduled_task.delete_all': 'MAINTAINER',
-
     # Component
     'component.view':        'REPORTER',
     'component.edit':        'MAINTAINER',

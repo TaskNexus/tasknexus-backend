@@ -354,21 +354,21 @@ class PeriodicTaskViewSet(viewsets.ModelViewSet):
         # Reporter+ can create
         workflow = serializer.validated_data.get('workflow')
         if workflow and workflow.project:
-            check_project_permission(self.request.user, workflow.project, 'scheduled_task.create')
+            check_project_permission(self.request.user, workflow.project, 'task.create')
         serializer.save()
 
     def perform_update(self, serializer):
         instance = self.get_object()
         if instance.workflow and instance.workflow.project:
             check_project_permission(
-                self.request.user, instance.workflow.project, 'scheduled_task.edit', instance
+                self.request.user, instance.workflow.project, 'task.operate', instance
             )
         serializer.save()
 
     def perform_destroy(self, instance):
         if instance.workflow and instance.workflow.project:
             check_project_permission(
-                self.request.user, instance.workflow.project, 'scheduled_task.delete', instance
+                self.request.user, instance.workflow.project, 'task.delete', instance
             )
         instance.delete()
 
@@ -377,7 +377,7 @@ class PeriodicTaskViewSet(viewsets.ModelViewSet):
         task = self.get_object()
         # Permission: Maintainer+ for all, others for own
         if task.workflow and task.workflow.project:
-            check_project_permission(request.user, task.workflow.project, 'scheduled_task.edit', task)
+            check_project_permission(request.user, task.workflow.project, 'task.operate', task)
         task.enabled = not task.enabled
         task.save()
         
@@ -419,21 +419,21 @@ class ScheduledTaskViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         workflow = serializer.validated_data.get('workflow')
         if workflow and workflow.project:
-            check_project_permission(self.request.user, workflow.project, 'scheduled_task.create')
+            check_project_permission(self.request.user, workflow.project, 'task.create')
         serializer.save()
 
     def perform_update(self, serializer):
         instance = self.get_object()
         if instance.workflow and instance.workflow.project:
             check_project_permission(
-                self.request.user, instance.workflow.project, 'scheduled_task.edit', instance
+                self.request.user, instance.workflow.project, 'task.operate', instance
             )
         serializer.save()
 
     def perform_destroy(self, instance):
         if instance.workflow and instance.workflow.project:
             check_project_permission(
-                self.request.user, instance.workflow.project, 'scheduled_task.delete', instance
+                self.request.user, instance.workflow.project, 'task.delete', instance
             )
         instance.delete()
     
@@ -464,21 +464,21 @@ class WebhookTaskViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         workflow = serializer.validated_data.get('workflow')
         if workflow and workflow.project:
-            check_project_permission(self.request.user, workflow.project, 'scheduled_task.create')
+            check_project_permission(self.request.user, workflow.project, 'task.create')
         serializer.save()
 
     def perform_update(self, serializer):
         instance = self.get_object()
         if instance.workflow and instance.workflow.project:
             check_project_permission(
-                self.request.user, instance.workflow.project, 'scheduled_task.edit', instance
+                self.request.user, instance.workflow.project, 'task.operate', instance
             )
         serializer.save()
 
     def perform_destroy(self, instance):
         if instance.workflow and instance.workflow.project:
             check_project_permission(
-                self.request.user, instance.workflow.project, 'scheduled_task.delete', instance
+                self.request.user, instance.workflow.project, 'task.delete', instance
             )
         instance.delete()
 
@@ -487,7 +487,7 @@ class WebhookTaskViewSet(viewsets.ModelViewSet):
         """Enable/Disable Webhook"""
         task = self.get_object()
         if task.workflow and task.workflow.project:
-            check_project_permission(request.user, task.workflow.project, 'scheduled_task.edit', task)
+            check_project_permission(request.user, task.workflow.project, 'task.operate', task)
         task.enabled = not task.enabled
         task.save()
         return Response({'status': 'success', 'enabled': task.enabled})
@@ -497,7 +497,7 @@ class WebhookTaskViewSet(viewsets.ModelViewSet):
         """Regenerate Token"""
         task = self.get_object()
         if task.workflow and task.workflow.project:
-            check_project_permission(request.user, task.workflow.project, 'scheduled_task.edit', task)
+            check_project_permission(request.user, task.workflow.project, 'task.operate', task)
         task.regenerate_token()
         serializer = self.get_serializer(task)
         return Response(serializer.data)

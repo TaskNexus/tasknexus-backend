@@ -12,6 +12,65 @@ class RegisterView(generics.CreateAPIView):
     permission_classes = (permissions.AllowAny,)
     serializer_class = UserSerializer
 
+    def create(self, request, *args, **kwargs):
+        from config.models import PlatformConfig, InviteLink
+        from django.core.cache import cache
+        from rest_framework import status
+
+        invite_token = request.data.get('invite_token')
+        email = request.data.get('email', '').strip()
+        invite = None
+
+        if invite_token:
+            # Invite-based registration: bypass registration toggle
+            try:
+                invite = InviteLink.objects.get(token=invite_token)
+            except (InviteLink.DoesNotExist, Exception):
+                return Response(
+                    {'detail': '邀请链接无效'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            if not invite.is_valid:
+                return Response(
+                    {'detail': '邀请链接已过期或已被使用'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        else:
+            # Normal registration: check toggle
+            reg_config = PlatformConfig.get_registration_config()
+            if not reg_config.get('registration_enabled', True):
+                return Response(
+                    {'detail': '当前未开放注册'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+        # Both paths require email verification
+        if not email:
+            return Response(
+                {'detail': '邮箱为必填项'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        verified_key = f'email_verified:{email}'
+        if not cache.get(verified_key):
+            return Response(
+                {'detail': '请先完成邮箱验证'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Create user
+        response = super().create(request, *args, **kwargs)
+
+        if response.status_code == 201:
+            # Clean up
+            cache.delete(verified_key)
+            if invite:
+                invite.used_count += 1
+                invite.save(update_fields=['used_count'])
+
+        return response
+
+
 class UserDetailView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -95,6 +154,113 @@ from rest_framework import status
 from django.core.cache import cache
 import random
 import string
+
+
+# ==================== Email Verification ====================
+
+class SendVerificationCodeView(APIView):
+    """
+    Send email verification code.
+    POST /api/auth/send-verification-code/  { "email": "xxx" }
+    """
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        email = request.data.get('email', '').strip()
+        if not email:
+            return Response({'detail': '请输入邮箱地址'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Rate limiting: 60s per email
+        rate_key = f'email_rate:{email}'
+        if cache.get(rate_key):
+            return Response({'detail': '请求过于频繁，请60秒后重试'}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+
+        # Generate 6-digit code
+        code = ''.join(random.choices(string.digits, k=6))
+
+        # Store code in cache (5 min TTL)
+        code_key = f'email_code:{email}'
+        cache.set(code_key, code, timeout=300)
+
+        # Set rate limit
+        cache.set(rate_key, '1', timeout=60)
+
+        # Send email using SMTP config from PlatformConfig
+        try:
+            self._send_code_email(email, code)
+        except Exception as e:
+            return Response(
+                {'detail': f'邮件发送失败: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+        return Response({'detail': '验证码已发送，请查收邮件'})
+
+    @staticmethod
+    def _send_code_email(to_email: str, code: str):
+        """Send verification code email using dynamic SMTP config."""
+        from config.models import PlatformConfig
+        from django.core.mail import EmailMessage
+        from django.core.mail.backends.smtp import EmailBackend
+
+        email_config = PlatformConfig.get_email_config()
+
+        if not email_config.get('smtp_host'):
+            raise ValueError('平台未配置邮件服务器，请联系管理员')
+
+        # Create a dynamic SMTP backend
+        backend = EmailBackend(
+            host=email_config['smtp_host'],
+            port=int(email_config['smtp_port']),
+            username=email_config['smtp_user'],
+            password=email_config['smtp_password'],
+            use_tls=email_config['smtp_use_tls'],
+            fail_silently=False,
+        )
+
+        from_email = email_config.get('from_email') or email_config['smtp_user']
+
+        msg = EmailMessage(
+            subject='注册验证码',
+            body=f'您的注册验证码为：{code}，有效期5分钟。如非本人操作，请忽略此邮件。',
+            from_email=from_email,
+            to=[to_email],
+            connection=backend,
+        )
+        msg.send()
+
+
+class VerifyCodeView(APIView):
+    """
+    Verify email verification code.
+    POST /api/auth/verify-code/  { "email": "xxx", "code": "123456" }
+    """
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        email = request.data.get('email', '').strip()
+        code = request.data.get('code', '').strip()
+
+        if not email or not code:
+            return Response({'detail': '请输入邮箱和验证码'}, status=status.HTTP_400_BAD_REQUEST)
+
+        code_key = f'email_code:{email}'
+        stored_code = cache.get(code_key)
+
+        if not stored_code:
+            return Response({'verified': False, 'detail': '验证码已过期，请重新发送'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if stored_code != code:
+            return Response({'verified': False, 'detail': '验证码错误'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Mark email as verified (10 min TTL)
+        verified_key = f'email_verified:{email}'
+        cache.set(verified_key, True, timeout=600)
+
+        # Clean up code key
+        cache.delete(code_key)
+
+        return Response({'verified': True, 'detail': '邮箱验证成功'})
 
 
 class FeishuOAuthViewSet(viewsets.ViewSet):
@@ -321,3 +487,4 @@ class FeishuOAuthViewSet(viewsets.ViewSet):
             })
         else:
             return Response({'bound': False})
+

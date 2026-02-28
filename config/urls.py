@@ -17,9 +17,19 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path, include
 from django.http import JsonResponse
+from rest_framework.routers import DefaultRouter
 
 from tasks.feishu_views import FeishuUsersView
-from config.views import PlatformConfigView, FeishuLoginStatusView
+from config.views import (
+    PlatformConfigView,
+    FeishuLoginStatusView,
+    RegistrationStatusView,
+    InviteLinkViewSet,
+    InviteValidateView,
+)
+
+invite_router = DefaultRouter()
+invite_router.register(r'invites', InviteLinkViewSet, basename='invite')
 
 
 def health_check(request):
@@ -42,4 +52,8 @@ urlpatterns = [
     path('api/feishu/users/', FeishuUsersView.as_view(), name='feishu-users'),
     path('api/platform/config/', PlatformConfigView.as_view(), name='platform-config'),
     path('api/platform/feishu-login-status/', FeishuLoginStatusView.as_view(), name='feishu-login-status'),
+    path('api/platform/registration-status/', RegistrationStatusView.as_view(), name='registration-status'),
+    path('api/platform/invites/validate/', InviteValidateView.as_view(), name='invite-validate'),
+    path('api/platform/', include(invite_router.urls)),
 ]
+

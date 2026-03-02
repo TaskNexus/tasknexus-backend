@@ -240,6 +240,10 @@ class WebhookTaskSerializer(serializers.ModelSerializer):
         read_only_fields = ['token', 'creator', 'total_run_count', 'last_run_at', 'created_at', 'updated_at']
 
     def get_webhook_url(self, obj):
+        from config.models import PlatformConfig
+        site_url = PlatformConfig.get_site_url()
+        if site_url:
+            return f'{site_url.rstrip("/")}/api/tasks/webhook/{obj.token}/trigger/'
         request = self.context.get('request')
         if request:
             return request.build_absolute_uri(f'/api/tasks/webhook/{obj.token}/trigger/')

@@ -16,6 +16,9 @@ class PlatformConfig(models.Model):
 
     Config structure:
         {
+            "site": {
+                "site_url": "http://192.168.3.40:8000"
+            },
             "feishu": {
                 "app_id": "cli_xxx",
                 "app_secret": "xxx",
@@ -110,6 +113,13 @@ class PlatformConfig(models.Model):
             'smtp_use_tls': email.get('smtp_use_tls', True),
             'from_email': email.get('from_email', ''),
         }
+
+    @classmethod
+    def get_site_url(cls) -> str:
+        """Get the externally accessible site URL for the backend API."""
+        config = cls.get_config()
+        site = config.get('site', {})
+        return site.get('site_url', '')
 
 
 class InviteLink(models.Model):

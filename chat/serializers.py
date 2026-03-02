@@ -11,7 +11,7 @@ class ChatSessionSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = ChatSession
-        fields = ['id', 'user', 'project_id', 'model_group', 'model', 'title', 'created_at', 'updated_at', 'messages']
+        fields = ['id', 'user', 'project_id', 'model_group', 'model', 'title', 'source', 'created_at', 'updated_at', 'messages']
         read_only_fields = ['user', 'created_at', 'updated_at', 'messages']
 
     def create(self, validated_data):

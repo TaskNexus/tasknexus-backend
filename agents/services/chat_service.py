@@ -25,12 +25,13 @@ class ChatService:
     """
     
     def __init__(self, user, session_id: Optional[int] = None, project_id: Optional[int] = None, 
-                 model_group: Optional[str] = None, model_name: Optional[str] = None):
+                 model_group: Optional[str] = None, model_name: Optional[str] = None, source: str = 'web'):
         self.user = user
         self.session_id = session_id
         self.project_id = project_id
         self.model_group = model_group
         self.model_name = model_name
+        self.source = source
         self.session = None
         self.client = None
         
@@ -308,6 +309,7 @@ class ChatService:
                 project_id=self.project_id,
                 model_group=self.model_group,
                 model=self.model_name,
+                source=self.source,
                 title=user_content[:30] if user_content else "New Chat"
             )
         return session

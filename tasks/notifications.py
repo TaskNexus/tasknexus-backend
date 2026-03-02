@@ -134,6 +134,91 @@ def _collect_pipeline_context(task):
     return result
 
 
+def send_feishu_message(content, user_ids):
+    """
+    Send a Feishu message to platform users by their user IDs.
+    Looks up each user's feishu_openid and sends a markdown card.
+    
+    Returns dict with 'success_count', 'total', and 'errors'.
+    """
+    import json
+    import lark_oapi as lark
+    from lark_oapi.api.im.v1 import (
+        CreateMessageRequest,
+        CreateMessageRequestBody,
+    )
+    from config.models import PlatformConfig
+    
+    result = {'success_count': 0, 'total': len(user_ids), 'errors': []}
+    
+    if not user_ids:
+        return result
+    
+    feishu_config = PlatformConfig.get_feishu_config()
+    app_id = feishu_config['app_id']
+    app_secret = feishu_config['app_secret']
+    
+    if not app_id or not app_secret:
+        result['errors'].append('Missing Feishu app credentials in platform settings')
+        return result
+    
+    client = lark.Client.builder() \
+        .app_id(app_id) \
+        .app_secret(app_secret) \
+        .log_level(lark.LogLevel.INFO) \
+        .build()
+    
+    card = {
+        "config": {"wide_screen_mode": True},
+        "header": {
+            "title": {"tag": "plain_text", "content": "📢 通知消息"},
+            "template": "blue"
+        },
+        "elements": [
+            {"tag": "markdown", "content": content}
+        ]
+    }
+    card_content = json.dumps(card)
+    
+    users = User.objects.filter(
+        id__in=user_ids,
+        feishu_openid__isnull=False
+    ).exclude(feishu_openid='')
+    
+    for user in users:
+        try:
+            request = CreateMessageRequest.builder() \
+                .receive_id_type("open_id") \
+                .request_body(
+                    CreateMessageRequestBody.builder()
+                        .receive_id(user.feishu_openid)
+                        .msg_type("interactive")
+                        .content(card_content)
+                        .build()
+                ) \
+                .build()
+            
+            response = client.im.v1.message.create(request)
+            
+            if response.success():
+                result['success_count'] += 1
+                logger.info(f"Sent Feishu message to {user.username} (open_id: {user.feishu_openid})")
+            else:
+                result['errors'].append(f"{user.username}: {response.msg}")
+                logger.warning(f"Failed to send Feishu message to {user.username}: {response.msg}")
+        except Exception as e:
+            result['errors'].append(f"{user.username}: {str(e)}")
+            logger.exception(f"Failed to send Feishu message to {user.username}: {e}")
+    
+    # Check for users without feishu_openid
+    found_ids = set(users.values_list('id', flat=True))
+    missing_ids = set(user_ids) - found_ids
+    if missing_ids:
+        result['errors'].append(f"{len(missing_ids)} user(s) have no linked Feishu account")
+    
+    return result
+
+
 def _do_send_notification(task_id, task_name, status, notify_user_ids, workflow_name, context, notify_template, feishu_open_ids=None, pipeline_vars=None):
     """
     Actually send notifications. Runs in a background thread.

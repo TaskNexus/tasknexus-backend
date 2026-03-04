@@ -136,7 +136,8 @@ class AgentConsumer(AsyncJsonWebsocketConsumer):
         is_stderr = content.get('is_stderr', False)
         
         if task_id:
-            await self.append_agent_task_output(task_id, output)
+            # 更新心跳时间 — 日志输出本身就是活跃信号
+            await self.update_agent_task_status(task_id, last_heartbeat=timezone.now())
             # Write to log file
             await self._append_log_file(task_id, output)
             # Broadcast to frontend log subscribers
@@ -153,7 +154,6 @@ class AgentConsumer(AsyncJsonWebsocketConsumer):
         """Process task completion notification."""
         task_id = content.get('task_id')
         exit_code = content.get('exit_code', 0)
-        stdout = content.get('stdout', '')
         stderr = content.get('stderr', '')
         
         if task_id:
@@ -164,7 +164,6 @@ class AgentConsumer(AsyncJsonWebsocketConsumer):
                 task_id,
                 status=status,
                 exit_code=exit_code,
-                stdout=stdout,
                 stderr=stderr,
                 result={'exit_code': exit_code},
                 finished_at=timezone.now()
@@ -247,19 +246,6 @@ class AgentConsumer(AsyncJsonWebsocketConsumer):
         except Exception as e:
             logger.error(f"Failed to update AgentTask {task_id}: {e}")
     
-    @database_sync_to_async
-    def append_agent_task_output(self, task_id, output):
-        """Append output to AgentTask stdout."""
-        from .models import AgentTask
-        from django.db.models import F
-        from django.db.models.functions import Concat
-        from django.db.models import Value
-        try:
-            AgentTask.objects.filter(id=task_id).update(
-                stdout=Concat(F('stdout'), Value(output))
-            )
-        except Exception as e:
-            logger.error(f"Failed to append output to AgentTask {task_id}: {e}")
 
     async def handle_task_heartbeat(self, content):
         """Process task heartbeat from agent."""

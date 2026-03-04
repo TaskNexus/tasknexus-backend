@@ -140,18 +140,13 @@ class AgentTaskViewSet(viewsets.ModelViewSet):
         task = self.get_object()
         log_path = AGENT_LOG_DIR / f"task_{task.id}.log"
         
+        content = ''
         if log_path.exists():
             content = log_path.read_text(encoding='utf-8', errors='replace')
-            return Response({
-                'task_id': task.id,
-                'status': task.status,
-                'content': content,
-            })
         
-        # Fallback to DB stdout
         return Response({
             'task_id': task.id,
             'status': task.status,
-            'content': task.stdout or '',
+            'content': content,
         })
 

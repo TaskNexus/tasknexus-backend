@@ -53,6 +53,33 @@ def handle_pipeline_event_for_agent(sender, event, **kwargs):
     if updated_ws:
         logger.info(f"[AgentSignal] Released {updated_ws} workspace(s) for pipeline {pipeline_id}")
 
+    # 2. 将 bamboo 中属于此 pipeline 的 RUNNING 节点状态设为 REVOKED
+    #    bamboo 的 revoke_pipeline 只设置 pipeline 级别状态，不设置节点状态
+    #    使用 runtime.set_state() 确保状态转换验证和信号发送
+    if event_type == PipelineEventType.POST_REVOKE_PIPELINE:
+        try:
+            from pipeline.eri.models import State as BambooState
+            from pipeline.eri.runtime import BambooDjangoRuntime
+
+            runtime = BambooDjangoRuntime()
+            running_nodes = BambooState.objects.filter(
+                root_id=pipeline_id,
+                name='RUNNING'
+            ).values_list('node_id', flat=True)
+            for node_id in running_nodes:
+                try:
+                    runtime.set_state(
+                        node_id=node_id,
+                        to_state='REVOKED',
+                        refresh_version=True,
+                        set_archive_time=True,
+                    )
+                    logger.info(f"[AgentSignal] Set node {node_id} to REVOKED for pipeline {pipeline_id}")
+                except Exception as e:
+                    logger.error(f"[AgentSignal] Failed to set node {node_id} to REVOKED: {e}")
+        except Exception as e:
+            logger.error(f"[AgentSignal] Failed to update bamboo node states: {e}")
+
     # 2. Cancel running agent tasks for this pipeline
     running_tasks = AgentTask.objects.filter(
         pipeline_id=pipeline_id,

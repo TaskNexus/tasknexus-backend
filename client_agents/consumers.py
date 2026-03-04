@@ -332,7 +332,7 @@ class AgentConsumer(AsyncJsonWebsocketConsumer):
         """Create or clear the log file for a task."""
         log_path = self._get_log_path(task_id)
         try:
-            with open(log_path, 'w') as f:
+            with open(log_path, 'w', encoding='utf-8') as f:
                 f.write(f"===== Task {task_id} started at {timezone.now().isoformat()} =====\n")
         except Exception as e:
             logger.error(f"Failed to init log file for task {task_id}: {e}")
@@ -342,7 +342,7 @@ class AgentConsumer(AsyncJsonWebsocketConsumer):
         """Append content to the log file for a task."""
         log_path = self._get_log_path(task_id)
         try:
-            with open(log_path, 'a') as f:
+            with open(log_path, 'a', encoding='utf-8') as f:
                 f.write(content + '\n')
         except Exception as e:
             logger.error(f"Failed to append to log file for task {task_id}: {e}")

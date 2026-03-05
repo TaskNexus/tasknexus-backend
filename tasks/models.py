@@ -190,3 +190,85 @@ class NodeExecutionRecord(models.Model):
 
     def __str__(self):
         return f"{self.workflow.name} - {self.node_id} ({self.duration}s)"
+
+
+import secrets as _secrets
+
+
+class FeishuApprovalRecord(models.Model):
+    """
+    Stores state of a single Feishu approval request created by the
+    FeishuApprovalComponent pipeline node.
+
+    Lifecycle:
+      PENDING  — card sent, waiting for all reviewers to decide
+      APPROVED — all reviewers approved
+      REJECTED — at least one reviewer rejected
+    """
+    STATUS_PENDING = 'PENDING'
+    STATUS_APPROVED = 'APPROVED'
+    STATUS_REJECTED = 'REJECTED'
+    STATUS_CHOICES = [
+        (STATUS_PENDING, 'Pending'),
+        (STATUS_APPROVED, 'Approved'),
+        (STATUS_REJECTED, 'Rejected'),
+    ]
+
+    # Unique token embedded in button value; used to look up this record on callback
+    token = models.CharField(max_length=64, unique=True, db_index=True)
+
+    # Audit content shown in the card
+    content = models.TextField()
+
+    # List of feishu open_ids for all reviewers, e.g. ["ou_abc", "ou_xyz"]
+    reviewer_open_ids = models.JSONField(default=list)
+
+    # Map of open_id -> "approved" | "rejected" for each reviewer who has decided
+    decisions = models.JSONField(default=dict)
+
+    # Map of open_id -> feishu message_id, used to update the card after decision
+    message_ids = models.JSONField(default=dict)
+
+    # Runtime node identity for bamboo_engine.api.callback
+    callback_node_id = models.CharField(max_length=64, blank=True, default='')
+    callback_node_version = models.CharField(max_length=64, blank=True, default='')
+
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=STATUS_PENDING)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def save(self, *args, **kwargs):
+        if not self.token:
+            self.token = _secrets.token_hex(16)
+        super().save(*args, **kwargs)
+
+    def record_decision(self, open_id: str, decision: str) -> bool:
+        """
+        Record a reviewer's decision.  Returns True if this completes all reviews.
+        decision must be 'approved' or 'rejected'.
+        """
+        if self.status != self.STATUS_PENDING:
+            return False
+        if open_id not in self.reviewer_open_ids:
+            return False
+        if open_id in self.decisions:
+            return False  # already decided
+
+        self.decisions[open_id] = decision
+
+        # Check if all reviewers have decided
+        if set(self.decisions.keys()) >= set(self.reviewer_open_ids):
+            if any(v == 'rejected' for v in self.decisions.values()):
+                self.status = self.STATUS_REJECTED
+            else:
+                self.status = self.STATUS_APPROVED
+
+        self.save(update_fields=['decisions', 'status', 'updated_at'])
+        return self.status != self.STATUS_PENDING
+
+    def __str__(self):
+        return f"FeishuApproval({self.token[:8]}… {self.status})"

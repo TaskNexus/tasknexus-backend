@@ -19,7 +19,7 @@ from django.urls import path, include
 from django.http import JsonResponse
 from rest_framework.routers import DefaultRouter
 
-from tasks.feishu_views import FeishuUsersView
+from tasks.feishu_views import FeishuUsersView, FeishuCardCallbackView
 from config.views import (
     PlatformConfigView,
     FeishuLoginStatusView,
@@ -50,6 +50,7 @@ urlpatterns = [
     path('api/mcp/', include('agents.mcp_urls')),
     path('api/client-agents/', include('client_agents.urls')),
     path('api/feishu/users/', FeishuUsersView.as_view(), name='feishu-users'),
+    path('api/feishu/card-callback/', FeishuCardCallbackView.as_view(), name='feishu-card-callback'),
     path('api/platform/config/', PlatformConfigView.as_view(), name='platform-config'),
     path('api/platform/feishu-login-status/', FeishuLoginStatusView.as_view(), name='feishu-login-status'),
     path('api/platform/registration-status/', RegistrationStatusView.as_view(), name='registration-status'),

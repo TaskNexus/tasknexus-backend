@@ -15,6 +15,7 @@ from .serializers import (
     AgentWorkspaceUpdateSerializer,
     AgentTaskSerializer
 )
+from config.pagination import StandardResultsSetPagination
 
 logger = logging.getLogger('django')
 
@@ -23,6 +24,7 @@ class ClientAgentViewSet(viewsets.ModelViewSet):
     """客户端 Agent 管理 API"""
     queryset = ClientAgent.objects.all()
     serializer_class = ClientAgentSerializer
+    pagination_class = StandardResultsSetPagination
 
     def get_serializer_class(self):
         if self.action == 'create':
@@ -149,4 +151,3 @@ class AgentTaskViewSet(viewsets.ModelViewSet):
             'status': task.status,
             'content': content,
         })
-

@@ -11,6 +11,7 @@ from bamboo_engine import api as bamboo_api
 from pipeline.eri.runtime import BambooDjangoRuntime
 from pipeline.core.data.library import VariableLibrary
 from config.permissions import check_project_permission
+from config.pagination import StandardResultsSetPagination
 
 logger = logging.getLogger('django')
 
@@ -18,6 +19,7 @@ class TaskViewSet(viewsets.ModelViewSet):
     queryset = TaskInstance.objects.all()
     serializer_class = TaskInstanceSerializer
     filterset_class = TaskInstanceFilter
+    pagination_class = StandardResultsSetPagination
 
     def get_serializer_class(self):
         if self.action == 'create':
@@ -349,6 +351,7 @@ from .serializers import PeriodicTaskSerializer
 class PeriodicTaskViewSet(viewsets.ModelViewSet):
     queryset = PeriodicTask.objects.all()
     serializer_class = PeriodicTaskSerializer
+    pagination_class = StandardResultsSetPagination
     
     def perform_create(self, serializer):
         # Reporter+ can create
@@ -415,6 +418,7 @@ from .serializers import ScheduledTaskSerializer
 class ScheduledTaskViewSet(viewsets.ModelViewSet):
     queryset = ScheduledTask.objects.all()
     serializer_class = ScheduledTaskSerializer
+    pagination_class = StandardResultsSetPagination
 
     def perform_create(self, serializer):
         workflow = serializer.validated_data.get('workflow')
@@ -460,6 +464,7 @@ from .serializers import WebhookTaskSerializer
 class WebhookTaskViewSet(viewsets.ModelViewSet):
     queryset = WebhookTask.objects.all()
     serializer_class = WebhookTaskSerializer
+    pagination_class = StandardResultsSetPagination
 
     def perform_create(self, serializer):
         workflow = serializer.validated_data.get('workflow')

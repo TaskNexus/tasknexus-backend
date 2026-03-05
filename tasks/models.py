@@ -262,7 +262,7 @@ class FeishuApprovalRecord(models.Model):
 
         # Check if all reviewers have decided
         if set(self.decisions.keys()) >= set(self.reviewer_open_ids):
-            if any(v == 'rejected' for v in self.decisions.values()):
+            if any(v == '0' for v in self.decisions.values()):
                 self.status = self.STATUS_REJECTED
             else:
                 self.status = self.STATUS_APPROVED

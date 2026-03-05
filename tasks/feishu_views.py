@@ -135,7 +135,7 @@ class FeishuCardCallbackView(View):
     Routing:
       The button's `behaviors[0].value` dict MUST contain an `action_type` field that
       identifies the handler to invoke.  Example button value:
-          {"action_type": "feishu_approval", "token": "...", "decision": "approved", ...}
+          {"action_type": "feishu_approval", "token": "...", "decision": "1", ...}
 
     Adding a new interaction type:
       1. Add an `action_type` key to your button's value dict.
@@ -195,7 +195,7 @@ class FeishuCardCallbackView(View):
         callback_node_id = value.get('node_id', '')
         callback_node_version = value.get('node_version', '')
 
-        if not token or decision not in ('approved', 'rejected'):
+        if not token or decision not in ('1', '0'):
             return JsonResponse({'toast': {'type': 'error', 'content': '无效的审核请求'}})
 
         # Identity cross-check
@@ -224,14 +224,14 @@ class FeishuCardCallbackView(View):
         if effective_open_id not in record.decisions:
             return JsonResponse({'toast': {'type': 'error', 'content': '您不在审核成员列表中'}})
 
-        decision_label = '通过 ✅' if decision == 'approved' else '不通过 ❌'
+        decision_label = '通过 ✅' if decision == '1' else '不通过 ❌'
         toast = {'type': 'success', 'content': f'已记录：{decision_label}，感谢审核'}
 
         if approval_completed:
             final_result = (
-                'approved'
+                '1'
                 if record.status == FeishuApprovalRecord.STATUS_APPROVED
-                else 'rejected'
+                else '0'
             )
             callback_ok, callback_err = self._callback_approval_node(
                 token=token,
@@ -294,13 +294,13 @@ class FeishuCardCallbackView(View):
     def _build_decided_card(decision: str) -> dict:
         """Build the static 'already decided' card (no buttons)."""
         now_str = timezone.localtime(timezone.now()).strftime('%Y-%m-%d %H:%M')
-        decision_text = '通过 ✅' if decision == 'approved' else '不通过 ❌'
+        decision_text = '通过 ✅' if decision == '1' else '不通过 ❌'
         return {
             'schema': '2.0',
             'config': {'update_multi': True},
             'header': {
                 'title': {'tag': 'plain_text', 'content': '📋 审核完成'},
-                'template': 'green' if decision == 'approved' else 'red',
+                'template': 'green' if decision == '1' else 'red',
             },
             'body': {
                 'elements': [

@@ -29,16 +29,22 @@ class AgentLogConsumer(AsyncJsonWebsocketConsumer):
         # Join task-specific log group
         self.log_group = f"agent_task_log_{self.task_id}"
         await self.channel_layer.group_add(self.log_group, self.channel_name)
-        
-        # Send existing log history
-        history = await self._read_log_history()
+
+        history_enabled = self._should_send_history()
         task_status = await self._get_task_status()
-        
-        await self.send_json({
-            "type": "log_history",
-            "content": history,
-            "task_status": task_status,
-        })
+
+        if history_enabled:
+            history = await self._read_log_history()
+            await self.send_json({
+                "type": "log_history",
+                "content": history,
+                "task_status": task_status,
+            })
+        else:
+            await self.send_json({
+                "type": "log_init",
+                "task_status": task_status,
+            })
         
         logger.info(f"Log viewer connected for task {self.task_id}")
 
@@ -67,6 +73,24 @@ class AgentLogConsumer(AsyncJsonWebsocketConsumer):
         except Exception as e:
             logger.error(f"Failed to read log history for task {self.task_id}: {e}")
         return ""
+
+    def _should_send_history(self):
+        query_string = self.scope.get('query_string', b'').decode('utf-8')
+        if not query_string:
+            return True
+
+        params = {}
+        for pair in query_string.split('&'):
+            if '=' in pair:
+                key, value = pair.split('=', 1)
+                params[key] = value
+            elif pair:
+                params[pair] = ''
+
+        history_value = params.get('history')
+        if history_value is None:
+            return True
+        return history_value not in {'0', 'false', 'False'}
 
     @database_sync_to_async
     def _get_task_status(self):

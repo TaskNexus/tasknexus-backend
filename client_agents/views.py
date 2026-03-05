@@ -1,11 +1,10 @@
 import logging
-from pathlib import Path
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from django.http import HttpResponse
 from .models import ClientAgent, AgentWorkspace, AgentTask
 from .consumers import AGENT_LOG_DIR
+from .log_reader import read_window, search_in_log
 from .serializers import (
     ClientAgentSerializer, 
     ClientAgentCreateSerializer,
@@ -151,3 +150,76 @@ class AgentTaskViewSet(viewsets.ModelViewSet):
             'status': task.status,
             'content': content,
         })
+
+    @action(detail=True, methods=['get'], url_path='log-window')
+    def log_window(self, request, pk=None):
+        """按窗口读取任务日志（支持向前/向后分页）。"""
+        task = self.get_object()
+        log_path = AGENT_LOG_DIR / f"task_{task.id}.log"
+
+        direction = request.query_params.get('direction', 'backward')
+        if direction not in ['backward', 'forward']:
+            return Response(
+                {'error': 'direction must be backward or forward'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        cursor_raw = request.query_params.get('cursor')
+        limit_raw = request.query_params.get('limit_bytes')
+
+        try:
+            cursor = int(cursor_raw) if cursor_raw is not None and cursor_raw != '' else None
+        except (TypeError, ValueError):
+            return Response({'error': 'cursor must be an integer'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            limit_bytes = int(limit_raw) if limit_raw is not None and limit_raw != '' else None
+        except (TypeError, ValueError):
+            return Response({'error': 'limit_bytes must be an integer'}, status=status.HTTP_400_BAD_REQUEST)
+
+        data = read_window(
+            log_path=log_path,
+            cursor=cursor,
+            direction=direction,
+            limit_bytes=limit_bytes,
+        )
+        data.update({
+            'task_id': task.id,
+            'status': task.status,
+        })
+        return Response(data)
+
+    @action(detail=True, methods=['get'], url_path='log-search')
+    def log_search(self, request, pk=None):
+        """在日志中执行流式关键字检索。"""
+        task = self.get_object()
+        log_path = AGENT_LOG_DIR / f"task_{task.id}.log"
+
+        query = (request.query_params.get('q') or '').strip()
+        if not query:
+            return Response({'error': 'q is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        cursor_raw = request.query_params.get('cursor')
+        limit_raw = request.query_params.get('limit')
+
+        try:
+            cursor = int(cursor_raw) if cursor_raw is not None and cursor_raw != '' else None
+        except (TypeError, ValueError):
+            return Response({'error': 'cursor must be an integer'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            limit = int(limit_raw) if limit_raw is not None and limit_raw != '' else None
+        except (TypeError, ValueError):
+            return Response({'error': 'limit must be an integer'}, status=status.HTTP_400_BAD_REQUEST)
+
+        data = search_in_log(
+            log_path=log_path,
+            query=query,
+            cursor=cursor,
+            limit=limit,
+        )
+        data.update({
+            'task_id': task.id,
+            'status': task.status,
+        })
+        return Response(data)

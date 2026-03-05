@@ -3,6 +3,7 @@ psycopg2-binary
 redis
 django-redis
 celery
+gunicorn>=22.0.0
 bamboo-engine>=3.0.0
 djangorestframework
 django-cors-headers

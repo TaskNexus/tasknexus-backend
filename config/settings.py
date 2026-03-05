@@ -13,6 +13,30 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 from pathlib import Path
 import os
 
+
+def env_bool(name: str, default: bool = False) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def env_int(name: str, default: int) -> int:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        return default
+
+
+def env_list(name: str, default: list[str] | None = None) -> list[str]:
+    value = os.environ.get(name)
+    if value is None or not value.strip():
+        return list(default or [])
+    return [item.strip() for item in value.split(",") if item.strip()]
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -21,12 +45,15 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-j%&jlm2wuetkimc$=om)rwl6)_yugnmfl9i#8he)fz&9&^t53s'
+SECRET_KEY = os.environ.get(
+    "SECRET_KEY",
+    "django-insecure-j%&jlm2wuetkimc$=om)rwl6)_yugnmfl9i#8he)fz&9&^t53s",
+)
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = env_bool("DEBUG", True)
 
-ALLOWED_HOSTS = ["*"]
+ALLOWED_HOSTS = env_list("ALLOWED_HOSTS", ["*"])
 
 
 # Application definition
@@ -156,6 +183,7 @@ DATABASES = {
         'PASSWORD': os.environ.get('DB_PASSWORD', 'postgres'),
         'HOST': os.environ.get('DB_HOST', 'db'),
         'PORT': os.environ.get('DB_PORT', '5432'),
+        'CONN_MAX_AGE': env_int('CONN_MAX_AGE', 60),
     }
 }
 
@@ -180,6 +208,11 @@ CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
 CELERY_WORKER_MAX_TASKS_PER_CHILD = 500
 # 降低预取数量，减少内存中缓存的任务消息
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1
+CELERY_TASK_ACKS_LATE = env_bool('CELERY_TASK_ACKS_LATE', True)
+CELERY_TASK_REJECT_ON_WORKER_LOST = env_bool('CELERY_TASK_REJECT_ON_WORKER_LOST', True)
+CELERY_BROKER_TRANSPORT_OPTIONS = {
+    'visibility_timeout': env_int('CELERY_BROKER_VISIBILITY_TIMEOUT', 3600),
+}
 
 CACHES = {
     "default": {
@@ -247,4 +280,3 @@ SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(minutes=60),
     'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
 }
-

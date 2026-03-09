@@ -50,6 +50,12 @@ DEFAULT_PERMISSION_MATRIX = {
     'task.delete_own':       'REPORTER',
     'task.delete_all':       'MAINTAINER',
 
+    # Ticket
+    'ticket.view':           'REPORTER',
+    'ticket.create':         'REPORTER',
+    'ticket.assign':         'MAINTAINER',
+    'ticket.delete':         'MAINTAINER',
+
     # Component
     'component.view':        'REPORTER',
     'component.edit':        'MAINTAINER',

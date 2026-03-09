@@ -99,6 +99,7 @@ urlpatterns = [
     path('api/workflows/', include('workflows.urls')),
     path('api/projects/', include('projects.urls')),
     path('api/tasks/', include('tasks.urls')),
+    path('api/tickets/', include('tickets.urls')),
     path('api/chat/', include('chat.urls')),
     path('api/components/', include('components.urls')),
     path('api/categories/', include('components.category_urls')),

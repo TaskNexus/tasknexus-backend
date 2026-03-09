@@ -81,6 +81,7 @@ INSTALLED_APPS = [
     'projects',
     'components',
     'tasks.apps.TasksConfig',
+    'tickets',
     'django_celery_beat',
     'chat',
     'django_filters',

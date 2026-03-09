@@ -72,26 +72,31 @@ class ProjectMemberViewSet(viewsets.ModelViewSet):
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from tasks.models import TaskInstance
-from workflows.models import WorkflowDefinition
 from tasks.serializers import TaskInstanceSerializer
 from workflows.serializers import WorkflowDefinitionSerializer
+from workflows.visibility import get_visible_workflow_queryset
 
 class DashboardStatsView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
         # 1. Recent Projects (Limit 4)
+        visible_workflows = get_visible_workflow_queryset(request.user)
+
         if request.user.platform_role == 'OWNER':
             projects = Project.objects.all().order_by('-created_at')[:4]
-            workflows = WorkflowDefinition.objects.all().order_by('-updated_at')[:4]
+            workflows = visible_workflows.order_by('-updated_at')[:4]
         else:
              projects = Project.objects.filter(members__user=request.user).order_by('-created_at')[:4]
-             workflows = WorkflowDefinition.objects.filter(project__members__user=request.user).order_by('-updated_at')[:4]
+             workflows = visible_workflows.order_by('-updated_at')[:4]
 
         project_data = ProjectSerializer(projects, many=True).data
 
         # 2. Recent Tasks (Limit 5)
-        tasks = TaskInstance.objects.filter(created_by=request.user).order_by('-created_at')[:5]
+        tasks = TaskInstance.objects.filter(
+            created_by=request.user,
+            workflow__in=visible_workflows
+        ).order_by('-created_at')[:5]
         task_data = TaskInstanceSerializer(tasks, many=True).data
 
         # 3. Recent Workflows (Common Flows) (Limit 4)
@@ -103,6 +108,9 @@ class DashboardStatsView(APIView):
             'workflows': workflow_data,
             'stats': {
                 'tasks_runnable': 0, # Placeholder
-                'tasks_running': TaskInstance.objects.filter(status='RUNNING').count()
+                'tasks_running': TaskInstance.objects.filter(
+                    status='RUNNING',
+                    workflow__in=visible_workflows
+                ).count()
             }
         })

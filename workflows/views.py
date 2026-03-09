@@ -3,6 +3,7 @@ from .models import WorkflowDefinition
 from .serializers import WorkflowDefinitionSerializer
 from config.permissions import check_project_permission
 from config.pagination import StandardResultsSetPagination
+from .visibility import get_visible_workflow_queryset
 
 class WorkflowViewSet(viewsets.ModelViewSet):
     """
@@ -15,12 +16,7 @@ class WorkflowViewSet(viewsets.ModelViewSet):
     pagination_class = StandardResultsSetPagination
 
     def get_queryset(self):
-        queryset = super().get_queryset()
-        
-        # Filter by user permissions
-        user = self.request.user
-        if user.platform_role != 'OWNER':
-            queryset = queryset.filter(project__members__user=user)
+        queryset = get_visible_workflow_queryset(self.request.user, super().get_queryset())
 
         project_id = self.request.query_params.get('project')
         if project_id:
@@ -30,7 +26,7 @@ class WorkflowViewSet(viewsets.ModelViewSet):
         if tag:
             queryset = queryset.filter(tags__contains=[tag])
 
-        return queryset
+        return queryset.distinct()
 
     def perform_create(self, serializer):
         # Check: Developer+ can create workflows

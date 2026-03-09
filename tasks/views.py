@@ -12,6 +12,7 @@ from pipeline.eri.runtime import BambooDjangoRuntime
 from pipeline.core.data.library import VariableLibrary
 from config.permissions import check_project_permission
 from config.pagination import StandardResultsSetPagination
+from workflows.visibility import assert_user_can_view_workflow, get_visible_workflow_queryset
 
 logger = logging.getLogger('django')
 
@@ -20,6 +21,12 @@ class TaskViewSet(viewsets.ModelViewSet):
     serializer_class = TaskInstanceSerializer
     filterset_class = TaskInstanceFilter
     pagination_class = StandardResultsSetPagination
+
+    def get_queryset(self):
+        visible_workflow_ids = get_visible_workflow_queryset(
+            self.request.user
+        ).values_list('id', flat=True)
+        return super().get_queryset().filter(workflow_id__in=visible_workflow_ids).distinct()
 
     def get_serializer_class(self):
         if self.action == 'create':
@@ -37,6 +44,8 @@ class TaskViewSet(viewsets.ModelViewSet):
         workflow = serializer.validated_data.get('workflow')
         if workflow and workflow.project:
             check_project_permission(request.user, workflow.project, 'task.create')
+        if workflow:
+            assert_user_can_view_workflow(request.user, workflow)
 
         task = serializer.save()
 
@@ -331,15 +340,16 @@ class TaskViewSet(viewsets.ModelViewSet):
             return Response({'error': 'No ids provided'}, status=status.HTTP_400_BAD_REQUEST)
         
         try:
-            tasks = TaskInstance.objects.filter(id__in=ids)
+            tasks = self.get_queryset().filter(id__in=ids)
             for task in tasks:
                 # Permission: Maintainer+ for all, others for own
                 if task.workflow and task.workflow.project:
                     check_project_permission(
                         request.user, task.workflow.project, 'task.delete', task
                     )
+            deleted_count = tasks.count()
             tasks.delete()
-            return Response({'status': 'success', 'message': f'Deleted {len(ids)} tasks'})
+            return Response({'status': 'success', 'message': f'Deleted {deleted_count} tasks'})
         except Exception as e:
             logger.exception("Failed to bulk delete tasks")
             return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -352,12 +362,20 @@ class PeriodicTaskViewSet(viewsets.ModelViewSet):
     queryset = PeriodicTask.objects.all()
     serializer_class = PeriodicTaskSerializer
     pagination_class = StandardResultsSetPagination
-    
+
+    def get_queryset(self):
+        visible_workflow_ids = get_visible_workflow_queryset(
+            self.request.user
+        ).values_list('id', flat=True)
+        return super().get_queryset().filter(workflow_id__in=visible_workflow_ids).distinct()
+
     def perform_create(self, serializer):
         # Reporter+ can create
         workflow = serializer.validated_data.get('workflow')
         if workflow and workflow.project:
             check_project_permission(self.request.user, workflow.project, 'task.create')
+        if workflow:
+            assert_user_can_view_workflow(self.request.user, workflow)
         serializer.save()
 
     def perform_update(self, serializer):
@@ -394,6 +412,7 @@ class PeriodicTaskViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['get'])
     def history(self, request, pk=None):
         """Get execution history for this periodic task"""
+        periodic_task = self.get_object()
         # We stored periodic_task_id in execution_data
         
         # Note: Filtering JSONField can be database dependent and slow. 
@@ -401,7 +420,10 @@ class PeriodicTaskViewSet(viewsets.ModelViewSet):
         # But for MVP, JSON filter is okay.
         
         # Django 4.2+ supports lookups in JSONField
-        history = TaskInstance.objects.filter(execution_data__periodic_task_id=int(pk)).order_by('-created_at')[:50]
+        history = TaskInstance.objects.filter(
+            workflow=periodic_task.workflow,
+            execution_data__periodic_task_id=int(pk),
+        ).order_by('-created_at')[:50]
         
         page = self.paginate_queryset(history)
         if page is not None:
@@ -420,10 +442,18 @@ class ScheduledTaskViewSet(viewsets.ModelViewSet):
     serializer_class = ScheduledTaskSerializer
     pagination_class = StandardResultsSetPagination
 
+    def get_queryset(self):
+        visible_workflow_ids = get_visible_workflow_queryset(
+            self.request.user
+        ).values_list('id', flat=True)
+        return super().get_queryset().filter(workflow_id__in=visible_workflow_ids).distinct()
+
     def perform_create(self, serializer):
         workflow = serializer.validated_data.get('workflow')
         if workflow and workflow.project:
             check_project_permission(self.request.user, workflow.project, 'task.create')
+        if workflow:
+            assert_user_can_view_workflow(self.request.user, workflow)
         serializer.save()
 
     def perform_update(self, serializer):
@@ -444,10 +474,14 @@ class ScheduledTaskViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['get'])
     def history(self, request, pk=None):
         """Get execution record for this scheduled task"""
+        scheduled_task = self.get_object()
         # Should be only one, but theoretically can fail and retry? 
         # Usually one-off.
         
-        history = TaskInstance.objects.filter(execution_data__scheduled_task_id=int(pk)).order_by('-created_at')
+        history = TaskInstance.objects.filter(
+            workflow=scheduled_task.workflow,
+            execution_data__scheduled_task_id=int(pk),
+        ).order_by('-created_at')
         
         page = self.paginate_queryset(history)
         if page is not None:
@@ -466,10 +500,18 @@ class WebhookTaskViewSet(viewsets.ModelViewSet):
     serializer_class = WebhookTaskSerializer
     pagination_class = StandardResultsSetPagination
 
+    def get_queryset(self):
+        visible_workflow_ids = get_visible_workflow_queryset(
+            self.request.user
+        ).values_list('id', flat=True)
+        return super().get_queryset().filter(workflow_id__in=visible_workflow_ids).distinct()
+
     def perform_create(self, serializer):
         workflow = serializer.validated_data.get('workflow')
         if workflow and workflow.project:
             check_project_permission(self.request.user, workflow.project, 'task.create')
+        if workflow:
+            assert_user_can_view_workflow(self.request.user, workflow)
         serializer.save()
 
     def perform_update(self, serializer):
@@ -510,7 +552,9 @@ class WebhookTaskViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['get'])
     def history(self, request, pk=None):
         """Get execution history"""
+        webhook_task = self.get_object()
         history = TaskInstance.objects.filter(
+            workflow=webhook_task.workflow,
             execution_data__webhook_task_id=int(pk)
         ).order_by('-created_at')[:50]
         

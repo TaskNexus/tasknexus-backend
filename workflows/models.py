@@ -20,6 +20,12 @@ class WorkflowDefinition(models.Model):
     
     # Tags for classification (e.g., ["Server", "Client"])
     tags = models.JSONField(default=list, blank=True, verbose_name="Tags")
+
+    # Visibility control:
+    # - empty visible_roles + empty visible_user_ids => all project members can view
+    # - otherwise, access is granted when role OR user matches (union)
+    visible_roles = models.JSONField(default=list, blank=True, verbose_name="Visible Roles")
+    visible_user_ids = models.JSONField(default=list, blank=True, verbose_name="Visible User IDs")
     
     # Store Backend Pipeline Tree (Bamboo Engine JSON)
     pipeline_tree = models.JSONField(default=dict, blank=True, verbose_name="Pipeline Tree")

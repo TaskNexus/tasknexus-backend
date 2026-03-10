@@ -482,9 +482,9 @@ class FeishuOAuthViewSet(viewsets.ViewSet):
         if request.user.feishu_openid:
             return Response({
                 'bound': True,
+                'open_id': request.user.feishu_openid,
                 'feishu_name': request.user.feishu_name,
                 'feishu_avatar_url': request.user.feishu_avatar_url,
             })
         else:
             return Response({'bound': False})
-

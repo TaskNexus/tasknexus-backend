@@ -1,9 +1,12 @@
 import logging
 import json
+from urllib.parse import quote, urlparse
 from rest_framework import viewsets, status
-from rest_framework.decorators import action
+from rest_framework.decorators import action, api_view, permission_classes, authentication_classes
 from rest_framework.response import Response
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from django.utils import timezone
+import requests as http_requests
 from .models import TaskInstance
 from .serializers import TaskInstanceSerializer, CreateTaskSerializer
 from .filters import TaskInstanceFilter
@@ -566,9 +569,197 @@ class WebhookTaskViewSet(viewsets.ModelViewSet):
         serializer = TaskInstanceSerializer(history, many=True)
         return Response(serializer.data)
 
+def _normalize_repo_url(repo_url: str) -> str:
+    url = (repo_url or '').strip()
+    if not url:
+        return ''
+    if not url.startswith(('http://', 'https://')):
+        url = f'https://{url}'
+    return url.rstrip('/')
 
-from rest_framework.decorators import api_view, permission_classes, authentication_classes
-from rest_framework.permissions import AllowAny
+
+def _detect_provider(repo_url: str) -> str:
+    parsed = urlparse(repo_url)
+    host = (parsed.netloc or '').lower()
+    if 'github.com' in host:
+        return 'github'
+    return 'gitlab'
+
+
+def _extract_repo_path(repo_url: str) -> str:
+    parsed = urlparse(repo_url)
+    path = (parsed.path or '').strip('/')
+    if path.endswith('.git'):
+        path = path[:-4]
+    return path
+
+
+def _fetch_github_branches(repo_url: str, token: str):
+    repo_path = _extract_repo_path(repo_url)
+    segments = [seg for seg in repo_path.split('/') if seg]
+    if len(segments) < 2:
+        raise ValueError('GitHub 仓库地址格式错误，应为 github.com/<owner>/<repo>')
+
+    owner, repo = segments[0], segments[1]
+    headers = {
+        'Accept': 'application/vnd.github+json',
+        'Authorization': f'token {token}',
+    }
+
+    default_branch = ''
+    repo_resp = http_requests.get(f'https://api.github.com/repos/{owner}/{repo}', headers=headers, timeout=15)
+    if repo_resp.status_code == 200:
+        default_branch = str((repo_resp.json() or {}).get('default_branch') or '')
+    elif repo_resp.status_code in (401, 403):
+        raise PermissionError('认证失败或无权限访问仓库')
+    elif repo_resp.status_code == 404:
+        raise FileNotFoundError('仓库不存在或不可访问')
+    else:
+        raise RuntimeError('无法访问 GitHub 仓库信息')
+
+    branches: list[dict] = []
+    page = 1
+    while page <= 10:
+        resp = http_requests.get(
+            f'https://api.github.com/repos/{owner}/{repo}/branches',
+            headers=headers,
+            params={'per_page': 100, 'page': page},
+            timeout=15,
+        )
+        if resp.status_code in (401, 403):
+            raise PermissionError('认证失败或无权限访问仓库')
+        if resp.status_code == 404:
+            raise FileNotFoundError('仓库不存在或不可访问')
+        if resp.status_code != 200:
+            raise RuntimeError('无法获取 GitHub 分支列表')
+
+        items = resp.json() or []
+        if not isinstance(items, list):
+            raise RuntimeError('GitHub 分支响应格式错误')
+
+        for item in items:
+            name = str(item.get('name') or '').strip()
+            if not name:
+                continue
+            branches.append({
+                'name': name,
+                'is_default': name == default_branch,
+            })
+
+        if len(items) < 100:
+            break
+        page += 1
+
+    branch_map = {}
+    for branch in branches:
+        current = branch_map.get(branch['name'])
+        if not current or branch.get('is_default'):
+            branch_map[branch['name']] = branch
+
+    return sorted(branch_map.values(), key=lambda x: (not x.get('is_default', False), x.get('name', '')))
+
+
+def _fetch_gitlab_branches(repo_url: str, token: str):
+    parsed = urlparse(repo_url)
+    repo_path = _extract_repo_path(repo_url)
+    segments = [seg for seg in repo_path.split('/') if seg]
+    if len(segments) < 2:
+        raise ValueError('GitLab 仓库地址格式错误，应为 <host>/<group>/<repo>')
+
+    if not parsed.scheme or not parsed.netloc:
+        raise ValueError('GitLab 仓库地址格式错误')
+
+    api_base = f'{parsed.scheme}://{parsed.netloc}'
+    encoded_project = quote(repo_path, safe='')
+    headers = {
+        'PRIVATE-TOKEN': token,
+    }
+
+    default_branch = ''
+    repo_resp = http_requests.get(f'{api_base}/api/v4/projects/{encoded_project}', headers=headers, timeout=15)
+    if repo_resp.status_code == 200:
+        default_branch = str((repo_resp.json() or {}).get('default_branch') or '')
+    elif repo_resp.status_code in (401, 403):
+        raise PermissionError('认证失败或无权限访问仓库')
+    elif repo_resp.status_code == 404:
+        raise FileNotFoundError('仓库不存在或不可访问')
+    else:
+        raise RuntimeError('无法访问 GitLab 仓库信息')
+
+    branches: list[dict] = []
+    page = 1
+    while page <= 10:
+        resp = http_requests.get(
+            f'{api_base}/api/v4/projects/{encoded_project}/repository/branches',
+            headers=headers,
+            params={'per_page': 100, 'page': page},
+            timeout=15,
+        )
+        if resp.status_code in (401, 403):
+            raise PermissionError('认证失败或无权限访问仓库')
+        if resp.status_code == 404:
+            raise FileNotFoundError('仓库不存在或不可访问')
+        if resp.status_code != 200:
+            raise RuntimeError('无法获取 GitLab 分支列表')
+
+        items = resp.json() or []
+        if not isinstance(items, list):
+            raise RuntimeError('GitLab 分支响应格式错误')
+
+        for item in items:
+            name = str(item.get('name') or '').strip()
+            if not name:
+                continue
+            branches.append({
+                'name': name,
+                'is_default': bool(item.get('default')) or name == default_branch,
+            })
+
+        if len(items) < 100:
+            break
+        page += 1
+
+    branch_map = {}
+    for branch in branches:
+        current = branch_map.get(branch['name'])
+        if not current or branch.get('is_default'):
+            branch_map[branch['name']] = branch
+
+    return sorted(branch_map.values(), key=lambda x: (not x.get('is_default', False), x.get('name', '')))
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def git_branches(request):
+    repo_url = _normalize_repo_url(str(request.data.get('repo_url') or ''))
+    token = str(request.data.get('token') or '').strip()
+
+    if not repo_url:
+        return Response({'error': 'repo_url 不能为空'}, status=status.HTTP_400_BAD_REQUEST)
+    if not token:
+        return Response({'error': 'token 不能为空'}, status=status.HTTP_400_BAD_REQUEST)
+
+    provider = _detect_provider(repo_url)
+    try:
+        if provider == 'github':
+            branches = _fetch_github_branches(repo_url, token)
+        else:
+            branches = _fetch_gitlab_branches(repo_url, token)
+        return Response({
+            'provider': provider,
+            'branches': branches,
+        })
+    except ValueError as exc:
+        return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+    except PermissionError:
+        return Response({'error': '认证失败或无权限访问仓库'}, status=status.HTTP_400_BAD_REQUEST)
+    except FileNotFoundError:
+        return Response({'error': '仓库不存在或不可访问'}, status=status.HTTP_400_BAD_REQUEST)
+    except http_requests.RequestException:
+        return Response({'error': '请求代码仓库失败，请稍后重试'}, status=status.HTTP_502_BAD_GATEWAY)
+    except RuntimeError as exc:
+        logger.warning('Failed to fetch git branches: %s', exc)
+        return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
 @api_view(['POST', 'GET'])  # GET supported for testing
 @authentication_classes([])  # No authentication required

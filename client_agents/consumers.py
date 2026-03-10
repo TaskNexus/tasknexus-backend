@@ -155,6 +155,7 @@ class AgentConsumer(AsyncJsonWebsocketConsumer):
         task_id = content.get('task_id')
         exit_code = content.get('exit_code', 0)
         stderr = content.get('stderr', '')
+        result = self._normalize_task_result(content.get('result'))
         
         if task_id:
             # Determine status based on exit code
@@ -165,7 +166,7 @@ class AgentConsumer(AsyncJsonWebsocketConsumer):
                 status=status,
                 exit_code=exit_code,
                 stderr=stderr,
-                result={'exit_code': exit_code},
+                result=result,
                 finished_at=timezone.now()
             )
             # Write final status to log file
@@ -183,6 +184,12 @@ class AgentConsumer(AsyncJsonWebsocketConsumer):
                 }
             )
             logger.info(f"Agent {self.agent.name} completed task {task_id} with exit code {exit_code}")
+
+    @staticmethod
+    def _normalize_task_result(raw_result):
+        if isinstance(raw_result, dict):
+            return raw_result
+        return {}
 
     async def handle_task_failed(self, content):
         """Process task failure notification."""

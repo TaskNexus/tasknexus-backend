@@ -1,7 +1,24 @@
+import os
+import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock, patch
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+BACKEND_ROOT = Path(__file__).resolve().parents[1]
+for path in [REPO_ROOT, BACKEND_ROOT]:
+    if str(path) not in sys.path:
+        sys.path.insert(0, str(path))
+
+from asgiref.sync import async_to_sync
 from django.test import SimpleTestCase
+from pipeline.core.data.expression import ConstantTemplate
+
+from tasknexus_client_agent.components.collections.agent import ClientAgentService
+from tasknexus_gem.entries.client.build import build_android
+
+from .consumers import AgentConsumer
 
 from .log_reader import SEARCH_CHUNK_BYTES, read_window, search_in_log
 
@@ -94,3 +111,133 @@ class LogReaderTests(SimpleTestCase):
         data = search_in_log(self.log_path, query='ABCD', limit=5)
         self.assertEqual(len(data['hits']), 1)
         self.assertEqual(data['hits'][0]['offset'], SEARCH_CHUNK_BYTES - 2)
+
+
+class AgentConsumerTests(SimpleTestCase):
+    def test_normalize_task_result_accepts_dict_only(self):
+        self.assertEqual(AgentConsumer._normalize_task_result({'file_name': 'demo.apk'}), {'file_name': 'demo.apk'})
+        self.assertEqual(AgentConsumer._normalize_task_result('{"file_name":"demo.apk"}'), {})
+        self.assertEqual(AgentConsumer._normalize_task_result(None), {})
+
+    def test_handle_task_completed_preserves_structured_result(self):
+        consumer = AgentConsumer()
+        consumer.agent = SimpleNamespace(name='demo-agent')
+        consumer.update_agent_task_status = AsyncMock()
+        consumer._append_log_file = AsyncMock()
+        consumer.channel_layer = SimpleNamespace(group_send=AsyncMock())
+
+        async_to_sync(consumer.handle_task_completed)(
+            {
+                'task_id': 12,
+                'exit_code': 0,
+                'stderr': '',
+                'result': {'file_name': 'demo.apk'},
+            }
+        )
+
+        update_args = consumer.update_agent_task_status.await_args.args
+        update_kwargs = consumer.update_agent_task_status.await_args.kwargs
+        self.assertEqual(update_args[0], 12)
+        self.assertEqual(update_kwargs['status'], 'COMPLETED')
+        self.assertEqual(update_kwargs['result'], {'file_name': 'demo.apk'})
+
+    def test_handle_task_completed_defaults_to_empty_result(self):
+        consumer = AgentConsumer()
+        consumer.agent = SimpleNamespace(name='demo-agent')
+        consumer.update_agent_task_status = AsyncMock()
+        consumer._append_log_file = AsyncMock()
+        consumer.channel_layer = SimpleNamespace(group_send=AsyncMock())
+
+        async_to_sync(consumer.handle_task_completed)(
+            {
+                'task_id': 13,
+                'exit_code': 1,
+                'stderr': 'boom',
+            }
+        )
+
+        update_kwargs = consumer.update_agent_task_status.await_args.kwargs
+        self.assertEqual(update_kwargs['status'], 'FAILED')
+        self.assertEqual(update_kwargs['result'], {})
+
+
+class ClientAgentServiceTests(SimpleTestCase):
+    class DummyData:
+        def __init__(self, outputs=None):
+            self._outputs = outputs or {}
+            self.outputs = SimpleNamespace(ex_data=None)
+
+        def get_one_of_outputs(self, key, default=None):
+            return self._outputs.get(key, default)
+
+        def set_outputs(self, key, value):
+            self._outputs[key] = value
+
+    def test_schedule_exposes_result_output(self):
+        service = ClientAgentService()
+        service.finish_schedule = Mock()
+        data = self.DummyData(outputs={'task_id': '42'})
+        task = SimpleNamespace(
+            status='COMPLETED',
+            exit_code=0,
+            stdout='ok',
+            stderr='',
+            result={'file_name': 'demo.apk'},
+            error_message='',
+        )
+
+        with patch('client_agents.models.AgentTask.objects.get', return_value=task):
+            completed = service.schedule(data, parent_data=None)
+
+        self.assertTrue(completed)
+        self.assertEqual(data._outputs['result'], {'file_name': 'demo.apk'})
+        self.assertEqual(data._outputs['exit_code'], 0)
+        service.finish_schedule.assert_called_once()
+
+    def test_schedule_defaults_result_to_empty_dict(self):
+        service = ClientAgentService()
+        service.finish_schedule = Mock()
+        data = self.DummyData(outputs={'task_id': '42'})
+        task = SimpleNamespace(
+            status='FAILED',
+            exit_code=1,
+            stdout='',
+            stderr='boom',
+            result='not-a-dict',
+            error_message='failed',
+        )
+
+        with patch('client_agents.models.AgentTask.objects.get', return_value=task):
+            completed = service.schedule(data, parent_data=None)
+
+        self.assertFalse(completed)
+        self.assertEqual(data._outputs['result'], {})
+
+    def test_splice_can_read_result_field(self):
+        resolved = ConstantTemplate.resolve_template('${result["file_name"]}', {'result': {'file_name': 'demo.apk'}})
+        self.assertEqual(resolved, 'demo.apk')
+
+
+class BuildAndroidTests(SimpleTestCase):
+    @patch('tasknexus_gem.entries.client.build.build_android.gen_uuid', return_value='guid-1')
+    @patch('tasknexus_gem.entries.client.build.build_android.run')
+    def test_main_returns_file_name_in_result(self, mock_run, _mock_uuid):
+        with patch.dict(
+            os.environ,
+            {
+                'package_type': 'default',
+                'branch': 'feature/test',
+                'build_env': 'prod',
+            },
+            clear=False,
+        ):
+            result = build_android.main()
+
+        self.assertIsInstance(result, dict)
+        self.assertIn('file_name', result)
+        self.assertTrue(result['file_name'].endswith('.apk'))
+        self.assertIn('feature_test', result['file_name'])
+
+        run_args = mock_run.call_args.args[0]
+        file_name_index = run_args.index('-fileName') + 1
+        self.assertEqual(run_args[file_name_index], result['file_name'])

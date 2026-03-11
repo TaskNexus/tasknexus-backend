@@ -1,11 +1,10 @@
 # -*- coding: utf-8 -*-
 import logging
 
-from asgiref.sync import async_to_sync
-from channels.layers import get_channel_layer
 from django.dispatch import receiver
 from django.utils import timezone
 
+from client_agents.dispatch_stream import publish_cancel_event
 from pipeline.eri.signals import pipeline_event
 
 logger = logging.getLogger('django')
@@ -89,19 +88,23 @@ def handle_pipeline_event_for_agent(sender, event, **kwargs):
     if not running_tasks.exists():
         return
 
-    channel_layer = get_channel_layer()
     for task in running_tasks:
+        previous_status = task.status
         task.status = 'CANCELLED'
         task.error_message = f'Pipeline {event_type}'
         task.finished_at = timezone.now()
         task.save(update_fields=['status', 'error_message', 'finished_at'])
 
-        # Send WebSocket cancel message to the agent
+        # Pending tasks may never have reached the agent process.
+        if previous_status == 'PENDING':
+            continue
+
         try:
-            async_to_sync(channel_layer.group_send)(
-                f"agent_{task.agent_id}",
-                {"type": "task_cancel", "task_id": task.id}
+            publish_cancel_event(
+                task_id=task.id,
+                agent_id=task.agent_id,
+                reason=f'Pipeline {event_type}',
             )
-            logger.info(f"[AgentSignal] Sent cancel for task {task.id} to agent {task.agent_id}")
+            logger.info(f"[AgentSignal] Enqueued cancel for task {task.id} to agent {task.agent_id}")
         except Exception as e:
-            logger.error(f"[AgentSignal] Failed to send cancel for task {task.id}: {e}")
+            logger.error(f"[AgentSignal] Failed to enqueue cancel for task {task.id}: {e}")

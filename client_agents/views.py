@@ -2,6 +2,8 @@ import logging
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from django.utils import timezone
+from client_agents.dispatch_stream import publish_cancel_event
 from .models import ClientAgent, AgentWorkspace, AgentTask
 from .consumers import AGENT_LOG_DIR
 from .log_reader import read_window, search_in_log
@@ -126,12 +128,24 @@ class AgentTaskViewSet(viewsets.ModelViewSet):
     def cancel(self, request, pk=None):
         """取消任务"""
         task = self.get_object()
-        if task.status in ['PENDING', 'DISPATCHED']:
+        if task.status in ['PENDING', 'DISPATCHED', 'RUNNING']:
+            previous_status = task.status
             task.status = 'CANCELLED'
-            task.save(update_fields=['status'])
+            task.error_message = 'Manual cancel'
+            task.finished_at = timezone.now()
+            task.save(update_fields=['status', 'error_message', 'finished_at'])
+            if previous_status in ['DISPATCHED', 'RUNNING']:
+                try:
+                    publish_cancel_event(task_id=task.id, agent_id=task.agent_id, reason='Manual cancel')
+                except Exception as e:
+                    logger.error(f"Failed to enqueue cancel event for task {task.id}: {e}")
+                    return Response(
+                        {'error': f'取消事件入队失败: {e}'},
+                        status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                    )
             return Response({'message': '任务已取消'})
         return Response(
-            {'error': '只能取消待分发或已分发的任务'},
+            {'error': '只能取消待分发、已分发或执行中的任务'},
             status=status.HTTP_400_BAD_REQUEST
         )
 

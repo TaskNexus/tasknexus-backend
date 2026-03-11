@@ -21,6 +21,7 @@ class TaskInstance(models.Model):
     
     context = models.JSONField(default=dict, blank=True)
     execution_data = models.JSONField(default=dict, blank=True)  # Store execution related data
+    workflow_graph_snapshot = models.JSONField(default=dict, blank=True)  # Task workflow graph snapshot
 
     # Notification settings (platform users)
     notify_enabled = models.BooleanField(default=False)

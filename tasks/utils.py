@@ -3,6 +3,86 @@ from pipeline.core.flow.activity import SubProcess
 from pipeline.engine.models import Status
 from pipeline.parser.utils import recursive_replace_id
 from pipeline.core.constants import PE
+from django.utils import timezone
+
+
+def _extract_subprocess_workflow_ids(graph_data):
+    """Extract subprocess workflow ids from X6 graph_data."""
+    workflow_ids = set()
+    if not isinstance(graph_data, dict):
+        return workflow_ids
+
+    cells = graph_data.get('cells', [])
+    if not isinstance(cells, list):
+        return workflow_ids
+
+    for cell in cells:
+        if not isinstance(cell, dict):
+            continue
+        data = cell.get('data')
+        if not isinstance(data, dict):
+            continue
+
+        node_type = str(data.get('type', '')).upper()
+        if node_type != 'SUBPROCESS':
+            continue
+
+        inputs = data.get('componentInputs') or data.get('inputs') or {}
+        workflow_id = None
+        if isinstance(inputs, dict):
+            workflow_id = inputs.get('workflow_id')
+        if not workflow_id:
+            workflow_id = data.get('workflow')
+
+        if workflow_id not in (None, ''):
+            workflow_ids.add(str(workflow_id))
+
+    return workflow_ids
+
+
+def build_workflow_graph_snapshot(root_workflow):
+    """
+    Build task graph snapshot from workflow.graph_data recursively.
+    Returns:
+    {
+      root_workflow_id: str,
+      captured_at: iso datetime str,
+      graphs: { "<workflow_id>": graph_data },
+      missing_workflow_ids: [str]
+    }
+    """
+    from workflows.models import WorkflowDefinition
+
+    graphs = {}
+    missing_workflow_ids = []
+    visited = set()
+    queue = [str(root_workflow.id)]
+
+    while queue:
+        workflow_id = queue.pop(0)
+        if workflow_id in visited:
+            continue
+        visited.add(workflow_id)
+
+        try:
+            wf = WorkflowDefinition.objects.get(id=workflow_id)
+        except WorkflowDefinition.DoesNotExist:
+            missing_workflow_ids.append(workflow_id)
+            continue
+
+        graph_data = copy.deepcopy(wf.graph_data or {})
+        graphs[str(wf.id)] = graph_data
+
+        for child_workflow_id in _extract_subprocess_workflow_ids(graph_data):
+            if child_workflow_id not in visited:
+                queue.append(child_workflow_id)
+
+    return {
+        'root_workflow_id': str(root_workflow.id),
+        'captured_at': timezone.now().isoformat(),
+        'graphs': graphs,
+        'missing_workflow_ids': sorted(set(missing_workflow_ids)),
+    }
 
 
 def regenerate_pipeline_ids_full(pipeline_tree):

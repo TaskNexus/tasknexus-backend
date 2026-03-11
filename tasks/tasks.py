@@ -159,13 +159,20 @@ def start_task_execution(task):
     from django.utils import timezone
     from bamboo_engine import api as bamboo_api
     from pipeline.eri.runtime import BambooDjangoRuntime
-    from tasks.utils import expand_pipeline_tree, regenerate_pipeline_ids_full
+    from tasks.utils import (
+        expand_pipeline_tree,
+        regenerate_pipeline_ids_full,
+        build_workflow_graph_snapshot,
+    )
     
     try:
         # 1. Prepare pipeline data
         workflow = task.workflow
         if not workflow:
             raise ValueError("Task has no workflow associated")
+
+        # Capture workflow graph snapshot for task execution detail rendering.
+        task.workflow_graph_snapshot = build_workflow_graph_snapshot(workflow)
             
         pipeline_tree = workflow.pipeline_tree
         if not pipeline_tree:

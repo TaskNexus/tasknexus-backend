@@ -234,6 +234,57 @@ class TaskViewSet(viewsets.ModelViewSet):
             return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     @action(detail=True, methods=['get'])
+    def graph_snapshot(self, request, pk=None):
+        """Get task workflow graph snapshot; fallback to latest workflow graph for legacy tasks."""
+        task = self.get_object()
+        requested_workflow_id = request.query_params.get('workflow_id')
+
+        snapshot = task.workflow_graph_snapshot or {}
+        snapshot_graphs = snapshot.get('graphs') if isinstance(snapshot, dict) else None
+        root_workflow_id = str(
+            (snapshot.get('root_workflow_id') if isinstance(snapshot, dict) else None) or task.workflow_id
+        )
+        target_workflow_id = str(requested_workflow_id or root_workflow_id)
+
+        if isinstance(snapshot_graphs, dict) and target_workflow_id in snapshot_graphs:
+            return Response({
+                'source': 'snapshot',
+                'graph_data': snapshot_graphs[target_workflow_id] or {},
+                'workflow_id': target_workflow_id,
+                'fallback': False,
+                'message': '',
+            })
+
+        # Legacy/no-snapshot fallback: return current workflow graph if accessible.
+        fallback_reason = (
+            '该任务无快照，当前展示最新工作流定义。'
+            if not isinstance(snapshot_graphs, dict) or not snapshot_graphs
+            else '该任务快照缺失该子流程，当前展示最新工作流定义。'
+        )
+
+        live_workflow = None
+        if target_workflow_id == str(task.workflow_id):
+            live_workflow = task.workflow
+        else:
+            live_workflow = get_visible_workflow_queryset(request.user).filter(id=target_workflow_id).first()
+
+        if live_workflow:
+            graph_data = live_workflow.graph_data or {}
+            source = 'workflow_live'
+        else:
+            graph_data = {}
+            source = 'workflow_live'
+            fallback_reason = '该任务快照缺失该子流程，且无法访问对应工作流定义。'
+
+        return Response({
+            'source': source,
+            'graph_data': graph_data,
+            'workflow_id': target_workflow_id,
+            'fallback': True,
+            'message': fallback_reason,
+        })
+
+    @action(detail=True, methods=['get'])
     def node_history(self, request, pk=None):
         """Get execution history for a specific node"""
         task = self.get_object()

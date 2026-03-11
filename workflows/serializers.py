@@ -11,6 +11,7 @@ IDENTIFIER_PATTERN = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
 
 class WorkflowDefinitionSerializer(serializers.ModelSerializer):
     VALID_ROLES = {role for role, _ in ProjectMember.ROLE_CHOICES}
+    BUILTIN_SUBPROCESS_OUTPUT_KEYS = {'_loop', '_inner_loop'}
 
     class Meta:
         model = WorkflowDefinition
@@ -26,6 +27,23 @@ class WorkflowDefinitionSerializer(serializers.ModelSerializer):
                 f'{field_name} must match ^[A-Za-z_][A-Za-z0-9_]*$: {value}'
             )
         return key
+
+    def _extract_pipeline_output_keys(self, pipeline_outputs):
+        if isinstance(pipeline_outputs, list):
+            return {
+                output.strip()
+                for output in pipeline_outputs
+                if isinstance(output, str) and output.strip()
+            }
+
+        if isinstance(pipeline_outputs, dict):
+            return {
+                key.strip()
+                for key in pipeline_outputs.keys()
+                if isinstance(key, str) and key.strip()
+            }
+
+        return set()
 
     def validate_notify_template(self, value):
         if value in (None, ''):
@@ -123,12 +141,17 @@ class WorkflowDefinitionSerializer(serializers.ModelSerializer):
             if cells is not None:
                 if not isinstance(cells, list):
                     raise serializers.ValidationError({'graph_data': 'cells must be a list.'})
+                subprocess_cells_to_validate = []
+                subprocess_workflow_ids = set()
+
                 for c_index, cell in enumerate(cells):
                     if not isinstance(cell, dict):
                         continue
                     data = cell.get('data')
                     if not isinstance(data, dict):
                         continue
+
+                    node_type = str(data.get('type', '')).upper()
                     outputs = data.get('outputs')
                     if not isinstance(outputs, list):
                         continue
@@ -139,6 +162,77 @@ class WorkflowDefinitionSerializer(serializers.ModelSerializer):
                         if context_key in (None, ''):
                             continue
                         self._validate_identifier(context_key, f'cells[{c_index}].data.outputs[{o_index}].contextKey')
+
+                    if node_type != 'SUBPROCESS':
+                        continue
+
+                    has_source_mapping = any(
+                        isinstance(output, dict) and output.get('sourceKey') not in (None, '')
+                        for output in outputs
+                    )
+                    if not has_source_mapping:
+                        continue
+
+                    inputs = data.get('inputs')
+                    workflow_id = inputs.get('workflow_id') if isinstance(inputs, dict) else None
+                    if workflow_id in (None, ''):
+                        raise serializers.ValidationError({
+                            'graph_data': (
+                                f'cells[{c_index}].data.inputs.workflow_id is required '
+                                'when subprocess outputs are mapped.'
+                            )
+                        })
+
+                    workflow_id_str = str(workflow_id).strip()
+                    try:
+                        workflow_id_db = int(workflow_id_str)
+                    except (TypeError, ValueError):
+                        raise serializers.ValidationError({
+                            'graph_data': (
+                                f'cells[{c_index}].data.inputs.workflow_id references '
+                                f'unknown workflow: {workflow_id_str}'
+                            )
+                        })
+
+                    subprocess_workflow_ids.add(workflow_id_db)
+                    subprocess_cells_to_validate.append((c_index, workflow_id_str, workflow_id_db, outputs))
+
+                if subprocess_cells_to_validate:
+                    workflows = WorkflowDefinition.objects.filter(id__in=subprocess_workflow_ids).only('id', 'pipeline_tree')
+                    workflow_map = {workflow.id: workflow for workflow in workflows}
+
+                    for c_index, workflow_id_str, workflow_id_db, outputs in subprocess_cells_to_validate:
+                        workflow = workflow_map.get(workflow_id_db)
+                        if workflow is None:
+                            raise serializers.ValidationError({
+                                'graph_data': (
+                                    f'cells[{c_index}].data.inputs.workflow_id references '
+                                    f'unknown workflow: {workflow_id_str}'
+                                )
+                            })
+
+                        pipeline_outputs = ((workflow.pipeline_tree or {}).get('data') or {}).get('outputs')
+                        allowed_source_keys = self._extract_pipeline_output_keys(pipeline_outputs).union(
+                            self.BUILTIN_SUBPROCESS_OUTPUT_KEYS
+                        )
+
+                        for o_index, output in enumerate(outputs):
+                            if not isinstance(output, dict):
+                                continue
+
+                            source_key = output.get('sourceKey')
+                            if source_key in (None, ''):
+                                continue
+
+                            source_key = str(source_key).strip()
+                            if source_key not in allowed_source_keys:
+                                raise serializers.ValidationError({
+                                    'graph_data': (
+                                        f'cells[{c_index}].data.outputs[{o_index}].sourceKey '
+                                        f'"{source_key}" is not defined in subprocess workflow '
+                                        f'{workflow_id_str} outputs.'
+                                    )
+                                })
 
         return attrs
 

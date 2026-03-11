@@ -202,12 +202,15 @@ def start_task_execution(task):
                 root_pipeline_data[param['key']] = param['value']
 
         runtime = BambooDjangoRuntime()
-        bamboo_api.run_pipeline(
+        result = bamboo_api.run_pipeline(
             runtime=runtime,
             pipeline=pipeline_tree,
             root_pipeline_data=root_pipeline_data,
             cycle_tolerate=True  # Enable loop support with ExclusiveGateway
         )
+        
+        if not result.result:
+            raise RuntimeError(f"run_pipeline failed: {result.message}")
         
         # 5. Update task instance
         task.pipeline_id = pipeline_tree['id']

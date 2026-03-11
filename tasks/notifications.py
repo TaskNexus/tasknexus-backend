@@ -3,14 +3,14 @@
 Task Notification Module
 
 Sends task execution result notifications via channel plugins (e.g., Feishu).
-Supports custom templates with {{variable}} syntax.
+Supports custom templates with bamboo-engine `${...}` syntax.
 """
 
-import re
 import logging
 import threading
 
 from django.contrib.auth import get_user_model
+from bamboo_engine.template.template import Template
 
 logger = logging.getLogger('django')
 
@@ -30,34 +30,43 @@ STATUS_LABEL = {
 }
 
 DEFAULT_TEMPLATE = (
-    "{{status_emoji}} **任务{{status_label}}**\n\n"
-    "**任务名称**: {{task_name}}\n"
-    "**工作流**: {{workflow_name}}\n"
-    "**状态**: {{status_label}}"
+    "${status_emoji} **任务${status_label}**\n\n"
+    "**任务名称**: ${task_name}\n"
+    "**工作流**: ${workflow_name}\n"
+    "**状态**: ${status_label}"
 )
+
+
+def build_template_context(context: dict, pipeline_vars: dict, reserved: dict) -> dict:
+    """
+    Build render context with deterministic collision priority:
+    reserved > pipeline_vars > context.
+    """
+    variables = {}
+    if isinstance(context, dict):
+        variables.update(context)
+    if isinstance(pipeline_vars, dict):
+        variables.update(pipeline_vars)
+    if isinstance(reserved, dict):
+        variables.update(reserved)
+    return variables
 
 
 def render_template(template: str, variables: dict) -> str:
     """
-    Render a template string by replacing {{key}} or {{key.subkey}} 
-    with values from the variables dict.
-    
-    Supports nested path lookup like {{params.branch_name}}.
-    Unknown variables are replaced with empty string.
+    Render a template string using bamboo-engine Template.
+    On render failure, bamboo keeps unresolved `${...}` expressions unchanged.
     """
-    def replacer(match):
-        path = match.group(1).strip()
-        value = variables
-        for part in path.split('.'):
-            if isinstance(value, dict):
-                value = value.get(part, '')
-            else:
-                return ''
-            if value == '':
-                break
-        return str(value)
-    
-    return re.sub(r'\{\{(.+?)\}\}', replacer, template)
+    if not isinstance(template, str):
+        return str(template)
+
+    try:
+        rendered = Template(template).render(variables if isinstance(variables, dict) else {})
+    except Exception as e:
+        logger.warning("Failed to render notify template, fallback to original template: %s", e)
+        return template
+
+    return rendered if isinstance(rendered, str) else str(rendered)
 
 
 def send_task_notification(task):
@@ -229,16 +238,15 @@ def _do_send_notification(task_id, task_name, status, notify_user_ids, workflow_
         emoji = STATUS_EMOJI.get(status, '📋')
         label = STATUS_LABEL.get(status, status)
         
-        variables = {
+        reserved = {
             'task_name': task_name,
             'status': status,
             'status_emoji': emoji,
             'status_label': label,
             'workflow_name': workflow_name,
-            'params': context,  # task.context = runtime params
-            'vars': pipeline_vars or {},  # pipeline context variables (spliced outputs)
         }
-        
+        variables = build_template_context(context, pipeline_vars or {}, reserved)
+
         # Use custom template or default
         template = notify_template.strip() if notify_template else DEFAULT_TEMPLATE
         message = render_template(template, variables)
@@ -327,4 +335,3 @@ def _do_send_notification(task_id, task_name, status, notify_user_ids, workflow_
             
     except Exception as e:
         logger.exception(f"Error in task notification for task {task_id}: {e}")
-

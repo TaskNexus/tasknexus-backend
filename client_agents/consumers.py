@@ -243,6 +243,13 @@ class AgentConsumer(AsyncJsonWebsocketConsumer):
             "task_id": event["task_id"],
         })
 
+    async def agent_update(self, event):
+        """Send self-update instruction to agent."""
+        await self.send_json({
+            "type": "agent_update",
+            "task_id": event["task_id"],
+        })
+
     # ===== AgentTask Database Operations =====
     
     @database_sync_to_async

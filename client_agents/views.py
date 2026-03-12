@@ -3,7 +3,7 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.utils import timezone
-from client_agents.dispatch_stream import publish_cancel_event
+from client_agents.dispatch_stream import publish_cancel_event, publish_dispatch_event
 from .models import ClientAgent, AgentWorkspace, AgentTask
 from .consumers import AGENT_LOG_DIR
 from .log_reader import read_window, search_in_log
@@ -19,6 +19,8 @@ from .serializers import (
 from config.pagination import StandardResultsSetPagination
 
 logger = logging.getLogger('django')
+
+SELF_UPDATE_TIMEOUT_SECONDS = 900
 
 
 class ClientAgentViewSet(viewsets.ModelViewSet):
@@ -36,6 +38,61 @@ class ClientAgentViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)
+
+    @action(detail=True, methods=['post'], url_path='self-update')
+    def self_update(self, request, pk=None):
+        """Trigger in-place self-update for a specific online agent."""
+        agent = self.get_object()
+
+        if agent.status != 'ONLINE':
+            return Response(
+                {'error': 'Agent must be ONLINE to start self-update'},
+                status=status.HTTP_409_CONFLICT
+            )
+
+        if AgentTask.objects.filter(agent_id=agent.id, status='RUNNING').exists():
+            return Response(
+                {'error': 'Agent has RUNNING tasks. Try again when it is idle.'},
+                status=status.HTTP_409_CONFLICT
+            )
+
+        agent_task = AgentTask.objects.create(
+            agent=agent,
+            workspace=None,
+            pipeline_id='',
+            command="[self_update]",
+            timeout=SELF_UPDATE_TIMEOUT_SECONDS,
+            status='PENDING',
+        )
+
+        try:
+            publish_dispatch_event(
+                task_id=agent_task.id,
+                agent_id=agent.id,
+                payload={
+                    'type': 'agent_update',
+                    'task_id': agent_task.id,
+                },
+            )
+        except Exception as e:
+            logger.error("Failed to publish self-update event for agent %s: %s", agent.id, e)
+            AgentTask.objects.filter(id=agent_task.id).update(
+                status='FAILED',
+                error_message=f'Self-update dispatch failed: {e}',
+                finished_at=timezone.now(),
+            )
+            return Response(
+                {'error': f'Failed to enqueue self-update task: {e}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+        return Response(
+            {
+                'task_id': agent_task.id,
+                'status': 'PENDING',
+            },
+            status=status.HTTP_202_ACCEPTED
+        )
 
     @action(detail=False, methods=['get'])
     def online(self, request):

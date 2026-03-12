@@ -69,6 +69,17 @@ def render_template(template: str, variables: dict) -> str:
     return rendered if isinstance(rendered, str) else str(rendered)
 
 
+def select_notify_template(status: str, notify_templates: dict) -> str:
+    """Select template by status, fallback to system default."""
+    if not isinstance(notify_templates, dict):
+        return DEFAULT_TEMPLATE
+
+    template = notify_templates.get(status, '')
+    if isinstance(template, str) and template.strip():
+        return template.strip()
+    return DEFAULT_TEMPLATE
+
+
 def send_task_notification(task):
     """
     Send notification to configured users when a task finishes.
@@ -82,10 +93,10 @@ def send_task_notification(task):
     if not has_platform and not has_feishu:
         return
     
-    # Read template from workflow
-    notify_template = ''
+    # Read templates from workflow
+    notify_templates = {}
     if task.workflow:
-        notify_template = getattr(task.workflow, 'notify_template', '') or ''
+        notify_templates = getattr(task.workflow, 'notify_templates', {}) or {}
     
     # Collect pipeline context variables (includes spliced outputs like ${news})
     pipeline_vars = _collect_pipeline_context(task)
@@ -100,7 +111,7 @@ def send_task_notification(task):
             task.notify_user_ids if has_platform else [],
             task.workflow.name if task.workflow else 'Unknown',
             task.context or {},
-            notify_template,
+            notify_templates,
             task.feishu_notify_open_ids if has_feishu else [],
             pipeline_vars,
         ),
@@ -228,7 +239,7 @@ def send_feishu_message(content, user_ids):
     return result
 
 
-def _do_send_notification(task_id, task_name, status, notify_user_ids, workflow_name, context, notify_template, feishu_open_ids=None, pipeline_vars=None):
+def _do_send_notification(task_id, task_name, status, notify_user_ids, workflow_name, context, notify_templates=None, feishu_open_ids=None, pipeline_vars=None):
     """
     Actually send notifications. Runs in a background thread.
     Sends to both platform users (by user ID lookup) and direct Feishu open_ids.
@@ -247,8 +258,8 @@ def _do_send_notification(task_id, task_name, status, notify_user_ids, workflow_
         }
         variables = build_template_context(context, pipeline_vars or {}, reserved)
 
-        # Use custom template or default
-        template = notify_template.strip() if notify_template else DEFAULT_TEMPLATE
+        # Use status-specific template or fallback default
+        template = select_notify_template(status, notify_templates or {})
         message = render_template(template, variables)
         
         from config.models import PlatformConfig

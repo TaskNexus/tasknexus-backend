@@ -7,6 +7,7 @@ from projects.models import ProjectMember
 
 
 IDENTIFIER_PATTERN = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
+NOTIFY_TEMPLATE_STATUSES = {'FINISHED', 'FAILED', 'REVOKED'}
 
 
 class WorkflowDefinitionSerializer(serializers.ModelSerializer):
@@ -45,12 +46,35 @@ class WorkflowDefinitionSerializer(serializers.ModelSerializer):
 
         return set()
 
-    def validate_notify_template(self, value):
+    def validate_notify_templates(self, value):
         if value in (None, ''):
-            return ''
-        if '{{' in value or '}}' in value:
-            raise serializers.ValidationError('notify_template only supports ${...} syntax.')
-        return value
+            return {}
+        if not isinstance(value, dict):
+            raise serializers.ValidationError('notify_templates must be an object.')
+
+        normalized = {}
+        for raw_status, raw_template in value.items():
+            if not isinstance(raw_status, str):
+                raise serializers.ValidationError('notify_templates keys must be status strings.')
+            status = raw_status.upper().strip()
+            if status not in NOTIFY_TEMPLATE_STATUSES:
+                raise serializers.ValidationError(
+                    f'notify_templates contains unsupported status: {raw_status}'
+                )
+            if raw_template in (None, ''):
+                normalized[status] = ''
+                continue
+            if not isinstance(raw_template, str):
+                raise serializers.ValidationError(
+                    f'notify_templates[{status}] must be a string.'
+                )
+            if '{{' in raw_template or '}}' in raw_template:
+                raise serializers.ValidationError(
+                    f'notify_templates[{status}] only supports ${...} syntax.'
+                )
+            normalized[status] = raw_template
+
+        return normalized
 
     def validate_visible_roles(self, value):
         if value in (None, ''):

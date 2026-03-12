@@ -1,9 +1,11 @@
 
-from rest_framework import viewsets, status
+from rest_framework import viewsets, status, permissions
 from rest_framework.response import Response
-from rest_framework.decorators import action
+from rest_framework.exceptions import PermissionDenied
 from pipeline.component_framework.library import ComponentLibrary
-from .models import ComponentCategory
+from config.pagination import StandardResultsSetPagination
+from .models import ComponentCategory, ComponentNodeTemplate
+from .serializers import ComponentNodeTemplateSerializer
 
 class ComponentViewSet(viewsets.ViewSet):
     """
@@ -91,6 +93,36 @@ class ComponentViewSet(viewsets.ViewSet):
             })
             
         return Response(components)
+
+
+class ComponentNodeTemplateViewSet(viewsets.ModelViewSet):
+    queryset = ComponentNodeTemplate.objects.all().select_related("created_by")
+    serializer_class = ComponentNodeTemplateSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    pagination_class = StandardResultsSetPagination
+    http_method_names = ["get", "post", "patch", "delete", "head", "options"]
+
+    def get_queryset(self):
+        return super().get_queryset().order_by("-updated_at")
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user)
+
+    def _can_manage(self, template: ComponentNodeTemplate):
+        if template.created_by_id == self.request.user.id:
+            return True
+        return getattr(self.request.user, "platform_role", "") in {"OWNER", "MAINTAINER"}
+
+    def perform_update(self, serializer):
+        instance = self.get_object()
+        if not self._can_manage(instance):
+            raise PermissionDenied("Only creator or platform maintainer/owner can modify this template.")
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        if not self._can_manage(instance):
+            raise PermissionDenied("Only creator or platform maintainer/owner can delete this template.")
+        instance.delete()
 
 
 class CategoryViewSet(viewsets.ViewSet):

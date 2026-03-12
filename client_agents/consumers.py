@@ -229,7 +229,9 @@ class AgentConsumer(AsyncJsonWebsocketConsumer):
             "client_repo_url": event.get("client_repo_url", ""),
             "client_repo_ref": event.get("client_repo_ref", "main"),
             "client_repo_token": event.get("client_repo_token", ""),
+            "execution_mode": event.get("execution_mode", "command"),
             "command": event["command"],
+            "code": event.get("code", {}),
             "timeout": event.get("timeout", 3600),
             "environment": event.get("environment", {}),
         })

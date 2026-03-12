@@ -234,6 +234,8 @@ class AgentConsumer(AsyncJsonWebsocketConsumer):
             "code": event.get("code", {}),
             "timeout": event.get("timeout", 3600),
             "environment": event.get("environment", {}),
+            "prepare_repo_before_execute": event.get("prepare_repo_before_execute", False),
+            "cleanup_workspace_on_success": event.get("cleanup_workspace_on_success", False),
         })
 
     async def task_cancel(self, event):

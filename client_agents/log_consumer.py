@@ -59,6 +59,8 @@ class AgentLogConsumer(AsyncJsonWebsocketConsumer):
             "type": "log",
             "line": event.get("line", ""),
             "is_stderr": event.get("is_stderr", False),
+            "replace_last": event.get("replace_last", False),
+            "line_complete": event.get("line_complete", False),
             "finished": event.get("finished", False),
             "exit_code": event.get("exit_code", None),
         })

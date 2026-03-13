@@ -52,6 +52,7 @@ class AgentConsumer(AsyncJsonWebsocketConsumer):
         
         # Accept connection
         await self.accept()
+        self._task_log_stream_states = {}
         
         # Update agent status
         await self.update_agent_status('ONLINE')
@@ -127,6 +128,7 @@ class AgentConsumer(AsyncJsonWebsocketConsumer):
             )
             # Create/clear log file
             await self._init_log_file(task_id)
+            self._reset_task_log_state(task_id)
             logger.info(f"Agent {self.agent.name} started task {task_id}")
 
     async def handle_task_progress(self, content):
@@ -135,20 +137,10 @@ class AgentConsumer(AsyncJsonWebsocketConsumer):
         output = content.get('output', '')
         is_stderr = content.get('is_stderr', False)
         
-        if task_id:
+        if task_id and output is not None:
             # 更新心跳时间 — 日志输出本身就是活跃信号
             await self.update_agent_task_status(task_id, last_heartbeat=timezone.now())
-            # Write to log file
-            await self._append_log_file(task_id, output)
-            # Broadcast to frontend log subscribers
-            await self.channel_layer.group_send(
-                f"agent_task_log_{task_id}",
-                {
-                    "type": "log_dispatch",
-                    "line": output,
-                    "is_stderr": is_stderr,
-                }
-            )
+            await self._process_task_output(task_id, str(output), bool(is_stderr))
 
     async def handle_task_completed(self, content):
         """Process task completion notification."""
@@ -158,6 +150,7 @@ class AgentConsumer(AsyncJsonWebsocketConsumer):
         result = self._normalize_task_result(content.get('result'))
         
         if task_id:
+            await self._flush_pending_log_line(task_id)
             # Determine status based on exit code
             status = 'COMPLETED' if exit_code == 0 else 'FAILED'
             
@@ -170,19 +163,19 @@ class AgentConsumer(AsyncJsonWebsocketConsumer):
                 finished_at=timezone.now()
             )
             # Write final status to log file
-            status_line = f"\n===== Task {status} (exit code: {exit_code}) ====="
-            await self._append_log_file(task_id, status_line)
+            status_line = f"===== Task {status} (exit code: {exit_code}) ====="
+            await self._append_log_file(task_id, status_line + '\n')
             # Notify frontend log subscribers that task is done
-            await self.channel_layer.group_send(
-                f"agent_task_log_{task_id}",
-                {
-                    "type": "log_dispatch",
-                    "line": status_line,
-                    "is_stderr": False,
-                    "finished": True,
-                    "exit_code": exit_code,
-                }
+            await self._dispatch_log_line(
+                task_id=task_id,
+                line=status_line,
+                is_stderr=False,
+                replace_last=False,
+                line_complete=True,
+                finished=True,
+                exit_code=exit_code,
             )
+            self._clear_task_log_state(task_id)
             logger.info(f"Agent {self.agent.name} completed task {task_id} with exit code {exit_code}")
 
     @staticmethod
@@ -197,6 +190,7 @@ class AgentConsumer(AsyncJsonWebsocketConsumer):
         error = content.get('error', 'Unknown error')
         
         if task_id:
+            await self._flush_pending_log_line(task_id)
             await self.update_agent_task_status(
                 task_id,
                 status='FAILED',
@@ -204,18 +198,18 @@ class AgentConsumer(AsyncJsonWebsocketConsumer):
                 finished_at=timezone.now()
             )
             # Write error to log file
-            error_line = f"\n===== Task FAILED: {error} ====="
-            await self._append_log_file(task_id, error_line)
+            error_line = f"===== Task FAILED: {error} ====="
+            await self._append_log_file(task_id, error_line + '\n')
             # Notify frontend
-            await self.channel_layer.group_send(
-                f"agent_task_log_{task_id}",
-                {
-                    "type": "log_dispatch",
-                    "line": error_line,
-                    "is_stderr": True,
-                    "finished": True,
-                }
+            await self._dispatch_log_line(
+                task_id=task_id,
+                line=error_line,
+                is_stderr=True,
+                replace_last=False,
+                line_complete=True,
+                finished=True,
             )
+            self._clear_task_log_state(task_id)
             logger.error(f"Agent {self.agent.name} failed task {task_id}: {error}")
 
     # ===== Channel Layer Message Handlers =====
@@ -343,10 +337,169 @@ class AgentConsumer(AsyncJsonWebsocketConsumer):
 
     @database_sync_to_async
     def _append_log_file(self, task_id, content):
-        """Append content to the log file for a task."""
+        """Append raw content to the log file for a task."""
         log_path = self._get_log_path(task_id)
         try:
             with open(log_path, 'a', encoding='utf-8') as f:
-                f.write(content + '\n')
+                f.write(content)
         except Exception as e:
             logger.error(f"Failed to append to log file for task {task_id}: {e}")
+
+    def _reset_task_log_state(self, task_id):
+        task_key = int(task_id)
+        self._task_log_stream_states[task_key] = {
+            'line_buffer': '',
+            'line_is_stderr': False,
+            'frontend_active': False,
+            'frontend_line': '',
+            'frontend_is_stderr': False,
+        }
+
+    def _get_task_log_state(self, task_id):
+        task_key = int(task_id)
+        if not hasattr(self, '_task_log_stream_states'):
+            self._task_log_stream_states = {}
+        if task_key not in self._task_log_stream_states:
+            self._reset_task_log_state(task_key)
+        return self._task_log_stream_states[task_key]
+
+    def _clear_task_log_state(self, task_id):
+        if not hasattr(self, '_task_log_stream_states'):
+            return
+        self._task_log_stream_states.pop(int(task_id), None)
+
+    @staticmethod
+    def _is_frontend_line_changed(state, line, is_stderr):
+        if not state['frontend_active']:
+            return True
+        return state['frontend_line'] != line or state['frontend_is_stderr'] != is_stderr
+
+    async def _dispatch_log_line(
+        self,
+        task_id,
+        line,
+        is_stderr,
+        replace_last,
+        line_complete,
+        finished=False,
+        exit_code=None,
+    ):
+        payload = {
+            "type": "log_dispatch",
+            "line": line,
+            "is_stderr": is_stderr,
+            "replace_last": replace_last,
+            "line_complete": line_complete,
+        }
+        if finished:
+            payload["finished"] = True
+        if exit_code is not None:
+            payload["exit_code"] = exit_code
+
+        await self.channel_layer.group_send(
+            f"agent_task_log_{task_id}",
+            payload
+        )
+
+    async def _emit_incomplete_line(self, task_id, state, line, is_stderr):
+        await self._dispatch_log_line(
+            task_id=task_id,
+            line=line,
+            is_stderr=is_stderr,
+            replace_last=state['frontend_active'],
+            line_complete=False,
+        )
+        state['frontend_active'] = True
+        state['frontend_line'] = line
+        state['frontend_is_stderr'] = is_stderr
+
+    async def _commit_line(self, task_id, state, line, is_stderr):
+        await self._append_log_file(task_id, line + '\n')
+        await self._dispatch_log_line(
+            task_id=task_id,
+            line=line,
+            is_stderr=is_stderr,
+            replace_last=state['frontend_active'],
+            line_complete=True,
+        )
+        state['line_buffer'] = ''
+        state['line_is_stderr'] = False
+        state['frontend_active'] = False
+        state['frontend_line'] = ''
+        state['frontend_is_stderr'] = False
+
+    async def _process_task_output(self, task_id, output, is_stderr):
+        state = self._get_task_log_state(task_id)
+
+        for ch in output:
+            if ch == '\r':
+                if state['line_buffer'] and self._is_frontend_line_changed(
+                    state, state['line_buffer'], state['line_is_stderr']
+                ):
+                    await self._emit_incomplete_line(
+                        task_id,
+                        state,
+                        state['line_buffer'],
+                        state['line_is_stderr'],
+                    )
+                state['line_buffer'] = ''
+                state['line_is_stderr'] = is_stderr
+                continue
+
+            if ch == '\n':
+                if state['line_buffer']:
+                    await self._commit_line(
+                        task_id,
+                        state,
+                        state['line_buffer'],
+                        state['line_is_stderr'],
+                    )
+                    continue
+
+                if state['frontend_active']:
+                    await self._commit_line(
+                        task_id,
+                        state,
+                        state['frontend_line'],
+                        state['frontend_is_stderr'],
+                    )
+                    continue
+
+                await self._commit_line(task_id, state, '', is_stderr)
+                continue
+
+            if not state['line_buffer']:
+                state['line_is_stderr'] = is_stderr
+            state['line_buffer'] += ch
+
+        if state['line_buffer'] and self._is_frontend_line_changed(
+            state,
+            state['line_buffer'],
+            state['line_is_stderr'],
+        ):
+            await self._emit_incomplete_line(
+                task_id,
+                state,
+                state['line_buffer'],
+                state['line_is_stderr'],
+            )
+
+    async def _flush_pending_log_line(self, task_id):
+        state = self._get_task_log_state(task_id)
+
+        if state['line_buffer']:
+            await self._commit_line(
+                task_id,
+                state,
+                state['line_buffer'],
+                state['line_is_stderr'],
+            )
+            return
+
+        if state['frontend_active']:
+            await self._commit_line(
+                task_id,
+                state,
+                state['frontend_line'],
+                state['frontend_is_stderr'],
+            )

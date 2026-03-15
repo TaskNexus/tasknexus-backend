@@ -1,18 +1,18 @@
-import json
 import logging
-import os
-from datetime import datetime
 from pathlib import Path
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from channels.db import database_sync_to_async
 from django.utils import timezone
 from django.conf import settings
 
+from .log_state import clear_active_line, set_active_line
+
 logger = logging.getLogger('django')
 
 # Log directory for agent task logs
 AGENT_LOG_DIR = Path(settings.BASE_DIR) / 'agent_logs'
 AGENT_LOG_DIR.mkdir(exist_ok=True)
+TASK_LOG_HEARTBEAT_INTERVAL_SECONDS = 5
 
 
 class AgentConsumer(AsyncJsonWebsocketConsumer):
@@ -53,6 +53,7 @@ class AgentConsumer(AsyncJsonWebsocketConsumer):
         # Accept connection
         await self.accept()
         self._task_log_stream_states = {}
+        self._task_log_heartbeat_at = {}
         
         # Update agent status
         await self.update_agent_status('ONLINE')
@@ -96,6 +97,12 @@ class AgentConsumer(AsyncJsonWebsocketConsumer):
             await self.handle_task_started(content)
         elif message_type == 'task_progress':
             await self.handle_task_progress(content)
+        elif message_type == 'task_log_append':
+            await self.handle_task_log_append(content)
+        elif message_type == 'task_log_active':
+            await self.handle_task_log_active(content)
+        elif message_type == 'task_log_active_clear':
+            await self.handle_task_log_active_clear(content)
         elif message_type == 'task_completed':
             await self.handle_task_completed(content)
         elif message_type == 'task_failed':
@@ -119,7 +126,7 @@ class AgentConsumer(AsyncJsonWebsocketConsumer):
 
     async def handle_task_started(self, content):
         """Process task started notification."""
-        task_id = content.get('task_id')
+        task_id = self._to_int(content.get('task_id'))
         if task_id:
             await self.update_agent_task_status(
                 task_id, 
@@ -128,23 +135,92 @@ class AgentConsumer(AsyncJsonWebsocketConsumer):
             )
             # Create/clear log file
             await self._init_log_file(task_id)
+            await self._clear_active_line_state(task_id)
             self._reset_task_log_state(task_id)
+            self._clear_task_heartbeat_marker(task_id)
             logger.info(f"Agent {self.agent.name} started task {task_id}")
 
     async def handle_task_progress(self, content):
         """Process task progress updates."""
-        task_id = content.get('task_id')
+        task_id = self._to_int(content.get('task_id'))
         output = content.get('output', '')
         is_stderr = content.get('is_stderr', False)
         
         if task_id and output is not None:
             # 更新心跳时间 — 日志输出本身就是活跃信号
-            await self.update_agent_task_status(task_id, last_heartbeat=timezone.now())
+            await self._refresh_task_heartbeat_if_due(task_id)
             await self._process_task_output(task_id, str(output), bool(is_stderr))
+
+    async def handle_task_log_append(self, content):
+        """Append a committed log chunk to the backend log file."""
+        task_id = self._to_int(content.get('task_id'))
+        start_offset = self._to_int(content.get('start_offset'))
+        chunk = content.get('content', '')
+
+        if not task_id or start_offset is None or chunk is None:
+            return
+
+        await self._refresh_task_heartbeat_if_due(task_id)
+        append_result = await self._append_log_chunk(task_id, start_offset, str(chunk))
+        if append_result.get('appended'):
+            await self._broadcast_log_file_update(
+                task_id=task_id,
+                file_size=append_result.get('file_size', 0),
+            )
+
+    async def handle_task_log_active(self, content):
+        """Store and broadcast the current active line."""
+        task_id = self._to_int(content.get('task_id'))
+        seq = self._to_int(content.get('seq'))
+        base_offset = self._to_int(content.get('base_offset'))
+        line = content.get('line', '')
+
+        if not task_id or seq is None or base_offset is None or line is None:
+            return
+
+        await self._refresh_task_heartbeat_if_due(task_id)
+        payload = {
+            "task_id": task_id,
+            "seq": seq,
+            "base_offset": base_offset,
+            "line": str(line),
+            "is_stderr": bool(content.get('is_stderr', False)),
+            "updated_at": timezone.now().isoformat(),
+        }
+        await self._set_active_line_state(task_id, payload)
+        await self.channel_layer.group_send(
+            f"agent_task_log_{task_id}",
+            {
+                "type": "log_active",
+                "seq": seq,
+                "base_offset": base_offset,
+                "line": payload["line"],
+                "is_stderr": payload["is_stderr"],
+            },
+        )
+
+    async def handle_task_log_active_clear(self, content):
+        """Clear the shared active line state."""
+        task_id = self._to_int(content.get('task_id'))
+        seq = self._to_int(content.get('seq'))
+        base_offset = self._to_int(content.get('base_offset'))
+
+        if not task_id or seq is None or base_offset is None:
+            return
+
+        await self._clear_active_line_state(task_id)
+        await self.channel_layer.group_send(
+            f"agent_task_log_{task_id}",
+            {
+                "type": "log_active_clear",
+                "seq": seq,
+                "base_offset": base_offset,
+            },
+        )
 
     async def handle_task_completed(self, content):
         """Process task completion notification."""
-        task_id = content.get('task_id')
+        task_id = self._to_int(content.get('task_id'))
         exit_code = content.get('exit_code', 0)
         stderr = content.get('stderr', '')
         result = self._normalize_task_result(content.get('result'))
@@ -162,20 +238,19 @@ class AgentConsumer(AsyncJsonWebsocketConsumer):
                 result=result,
                 finished_at=timezone.now()
             )
+            await self._clear_active_line_state(task_id)
             # Write final status to log file
             status_line = f"===== Task {status} (exit code: {exit_code}) ====="
-            await self._append_log_file(task_id, status_line + '\n')
-            # Notify frontend log subscribers that task is done
-            await self._dispatch_log_line(
+            file_size = await self._append_log_file(task_id, status_line + '\n')
+            await self._broadcast_log_file_update(
                 task_id=task_id,
-                line=status_line,
-                is_stderr=False,
-                replace_last=False,
-                line_complete=True,
+                file_size=file_size or 0,
+                task_status=status,
                 finished=True,
                 exit_code=exit_code,
             )
             self._clear_task_log_state(task_id)
+            self._clear_task_heartbeat_marker(task_id)
             logger.info(f"Agent {self.agent.name} completed task {task_id} with exit code {exit_code}")
 
     @staticmethod
@@ -186,7 +261,7 @@ class AgentConsumer(AsyncJsonWebsocketConsumer):
 
     async def handle_task_failed(self, content):
         """Process task failure notification."""
-        task_id = content.get('task_id')
+        task_id = self._to_int(content.get('task_id'))
         error = content.get('error', 'Unknown error')
         
         if task_id:
@@ -197,19 +272,18 @@ class AgentConsumer(AsyncJsonWebsocketConsumer):
                 error_message=error,
                 finished_at=timezone.now()
             )
+            await self._clear_active_line_state(task_id)
             # Write error to log file
             error_line = f"===== Task FAILED: {error} ====="
-            await self._append_log_file(task_id, error_line + '\n')
-            # Notify frontend
-            await self._dispatch_log_line(
+            file_size = await self._append_log_file(task_id, error_line + '\n')
+            await self._broadcast_log_file_update(
                 task_id=task_id,
-                line=error_line,
-                is_stderr=True,
-                replace_last=False,
-                line_complete=True,
+                file_size=file_size or 0,
+                task_status='FAILED',
                 finished=True,
             )
             self._clear_task_log_state(task_id)
+            self._clear_task_heartbeat_marker(task_id)
             logger.error(f"Agent {self.agent.name} failed task {task_id}: {error}")
 
     # ===== Channel Layer Message Handlers =====
@@ -268,6 +342,30 @@ class AgentConsumer(AsyncJsonWebsocketConsumer):
                 last_heartbeat=timezone.now()
             )
             logger.debug(f"Received heartbeat for task {task_id} from agent {self.agent.name}")
+
+    @staticmethod
+    def _to_int(value, default=None):
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
+    async def _refresh_task_heartbeat_if_due(self, task_id):
+        if not hasattr(self, '_task_log_heartbeat_at'):
+            self._task_log_heartbeat_at = {}
+        now = timezone.now()
+        task_key = int(task_id)
+        last = self._task_log_heartbeat_at.get(task_key)
+        if last is not None and (now - last).total_seconds() < TASK_LOG_HEARTBEAT_INTERVAL_SECONDS:
+            return
+
+        await self.update_agent_task_status(task_id, last_heartbeat=now)
+        self._task_log_heartbeat_at[task_key] = now
+
+    def _clear_task_heartbeat_marker(self, task_id):
+        if not hasattr(self, '_task_log_heartbeat_at'):
+            self._task_log_heartbeat_at = {}
+        self._task_log_heartbeat_at.pop(int(task_id), None)
 
     # ===== Database Operations =====
     
@@ -330,8 +428,8 @@ class AgentConsumer(AsyncJsonWebsocketConsumer):
         """Create or clear the log file for a task."""
         log_path = self._get_log_path(task_id)
         try:
-            with open(log_path, 'w', encoding='utf-8') as f:
-                f.write(f"===== Task {task_id} started at {timezone.now().isoformat()} =====\n")
+            with open(log_path, 'wb') as f:
+                f.write(b'')
         except Exception as e:
             logger.error(f"Failed to init log file for task {task_id}: {e}")
 
@@ -340,10 +438,41 @@ class AgentConsumer(AsyncJsonWebsocketConsumer):
         """Append raw content to the log file for a task."""
         log_path = self._get_log_path(task_id)
         try:
-            with open(log_path, 'a', encoding='utf-8') as f:
-                f.write(content)
+            with open(log_path, 'ab') as f:
+                f.write(content.encode('utf-8'))
+            return log_path.stat().st_size
         except Exception as e:
             logger.error(f"Failed to append to log file for task {task_id}: {e}")
+        return None
+
+    @database_sync_to_async
+    def _append_log_chunk(self, task_id, start_offset, content):
+        log_path = self._get_log_path(task_id)
+        try:
+            current_size = log_path.stat().st_size if log_path.exists() else 0
+            if current_size != int(start_offset):
+                logger.warning(
+                    "Rejected log append for task %s due to offset mismatch: expected=%s actual=%s",
+                    task_id,
+                    start_offset,
+                    current_size,
+                )
+                return {"appended": False, "file_size": current_size}
+
+            with open(log_path, 'ab') as f:
+                f.write(content.encode('utf-8'))
+            return {"appended": True, "file_size": log_path.stat().st_size}
+        except Exception as e:
+            logger.error(f"Failed to append log chunk for task {task_id}: {e}")
+        return {"appended": False, "file_size": 0}
+
+    @database_sync_to_async
+    def _set_active_line_state(self, task_id, payload):
+        set_active_line(task_id, payload)
+
+    @database_sync_to_async
+    def _clear_active_line_state(self, task_id):
+        clear_active_line(task_id)
 
     def _reset_task_log_state(self, task_id):
         task_key = int(task_id)
@@ -399,6 +528,30 @@ class AgentConsumer(AsyncJsonWebsocketConsumer):
         await self.channel_layer.group_send(
             f"agent_task_log_{task_id}",
             payload
+        )
+
+    async def _broadcast_log_file_update(
+        self,
+        task_id,
+        file_size,
+        task_status=None,
+        finished=False,
+        exit_code=None,
+    ):
+        payload = {
+            "type": "log_file_update",
+            "file_size": file_size,
+        }
+        if task_status:
+            payload["task_status"] = task_status
+        if finished:
+            payload["finished"] = True
+        if exit_code is not None:
+            payload["exit_code"] = exit_code
+
+        await self.channel_layer.group_send(
+            f"agent_task_log_{task_id}",
+            payload,
         )
 
     async def _emit_incomplete_line(self, task_id, state, line, is_stderr):

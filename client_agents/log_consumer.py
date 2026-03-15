@@ -2,6 +2,8 @@ import logging
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from channels.db import database_sync_to_async
 from .consumers import AGENT_LOG_DIR
+from .log_state import clear_active_line, get_active_line
+from .log_reader import _get_file_size
 
 logger = logging.getLogger('django')
 
@@ -32,6 +34,8 @@ class AgentLogConsumer(AsyncJsonWebsocketConsumer):
 
         history_enabled = self._should_send_history()
         task_status = await self._get_task_status()
+        file_size = await self._get_log_file_size()
+        active_line = await self._get_valid_active_line(task_status, file_size)
 
         if history_enabled:
             history = await self._read_log_history()
@@ -39,11 +43,15 @@ class AgentLogConsumer(AsyncJsonWebsocketConsumer):
                 "type": "log_history",
                 "content": history,
                 "task_status": task_status,
+                "file_size": file_size,
+                "active_line": active_line,
             })
         else:
             await self.send_json({
                 "type": "log_init",
                 "task_status": task_status,
+                "file_size": file_size,
+                "active_line": active_line,
             })
         
         logger.info(f"Log viewer connected for task {self.task_id}")
@@ -63,6 +71,31 @@ class AgentLogConsumer(AsyncJsonWebsocketConsumer):
             "line_complete": event.get("line_complete", False),
             "finished": event.get("finished", False),
             "exit_code": event.get("exit_code", None),
+        })
+
+    async def log_file_update(self, event):
+        await self.send_json({
+            "type": "log_file_update",
+            "file_size": event.get("file_size", 0),
+            "task_status": event.get("task_status"),
+            "finished": event.get("finished", False),
+            "exit_code": event.get("exit_code"),
+        })
+
+    async def log_active(self, event):
+        await self.send_json({
+            "type": "log_active",
+            "seq": event.get("seq", 0),
+            "base_offset": event.get("base_offset", 0),
+            "line": event.get("line", ""),
+            "is_stderr": event.get("is_stderr", False),
+        })
+
+    async def log_active_clear(self, event):
+        await self.send_json({
+            "type": "log_active_clear",
+            "seq": event.get("seq", 0),
+            "base_offset": event.get("base_offset", 0),
         })
 
     @database_sync_to_async
@@ -103,3 +136,36 @@ class AgentLogConsumer(AsyncJsonWebsocketConsumer):
             return task.status
         except AgentTask.DoesNotExist:
             return "UNKNOWN"
+
+    @database_sync_to_async
+    def _get_log_file_size(self):
+        log_path = AGENT_LOG_DIR / f"task_{self.task_id}.log"
+        return _get_file_size(log_path)
+
+    @database_sync_to_async
+    def _get_valid_active_line(self, task_status, file_size):
+        if task_status != "RUNNING":
+            clear_active_line(self.task_id)
+            return None
+
+        active_line = get_active_line(self.task_id)
+        if not active_line:
+            return None
+
+        try:
+            seq = int(active_line.get("seq"))
+            base_offset = int(active_line.get("base_offset"))
+        except (TypeError, ValueError):
+            clear_active_line(self.task_id)
+            return None
+
+        if base_offset != int(file_size):
+            clear_active_line(self.task_id)
+            return None
+
+        return {
+            "seq": seq,
+            "base_offset": base_offset,
+            "line": str(active_line.get("line", "")),
+            "is_stderr": bool(active_line.get("is_stderr", False)),
+        }
